@@ -211,3 +211,32 @@ class MetricsTest {
         assertTrue(m.lowResolution) // one effective module is below any resolution threshold
     }
 }
+
+class BoundaryHintsTest {
+    @Test
+    fun `swiftpm targets under Package_swift become module roots`() {
+        val head = setOf(
+            "apple/Package.swift",
+            "apple/Sources/PlayerUI/View.swift",
+            "apple/Sources/AppUI/App.swift",
+            "apple/Tests/PlayerUITests/ViewTests.swift",
+        )
+        val b = Boundaries(head)
+        assertEquals("apple/Sources/PlayerUI", b.moduleOf("apple/Sources/PlayerUI/View.swift"))
+        assertEquals("apple/Sources/AppUI", b.moduleOf("apple/Sources/AppUI/App.swift"))
+        assertEquals("apple/Tests/PlayerUITests", b.moduleOf("apple/Tests/PlayerUITests/ViewTests.swift"))
+    }
+
+    @Test
+    fun `module-root globs mark directories as boundaries`() {
+        val head = setOf(
+            "ios/Targets/Domain/Sources/Repo.swift",
+            "ios/Targets/Repository/Sources/Impl.swift",
+            "ios/Other/File.swift",
+        )
+        val b = Boundaries(head, moduleRootGlobs = listOf("ios/Targets/*"))
+        assertEquals("ios/Targets/Domain", b.moduleOf("ios/Targets/Domain/Sources/Repo.swift"))
+        assertEquals("ios/Targets/Repository", b.moduleOf("ios/Targets/Repository/Sources/Impl.swift"))
+        assertEquals("ios", b.moduleOf("ios/Other/File.swift"))
+    }
+}

@@ -14,6 +14,7 @@ data class AnalysisOptions(
     val maxFilesPerCommit: Int = 50,
     val groupWindowMin: Long = 30,
     val extraExcludes: List<String> = emptyList(),
+    val moduleRoots: List<String> = emptyList(),
 )
 
 /**
@@ -66,7 +67,7 @@ object Analysis {
         return AnalysisSetup(
             repo = repo,
             options = options,
-            context = AnalysisContext(changes, Boundaries(headFiles), headFiles),
+            context = AnalysisContext(changes, Boundaries(headFiles, options.moduleRoots), headFiles),
             changeUnitName = strategy.name,
             changeUnitReason = resolved.reason,
             shallow = GitLog.isShallow(repo),

@@ -37,10 +37,12 @@ class HistoryOptions : OptionGroup(name = "History options") {
     val maxFiles by option("--max-files", help = "Skip commits touching more files than this").int().restrictTo(min = 1).default(50)
     val groupWindowMin by option("--group-window", help = "Minutes within which same-author commits form one logical change (author-window mode)").long().restrictTo(1L..10_000L).default(30)
     val exclude by option("--exclude", help = "Glob to exclude (repeatable, adds to defaults)").multiple()
+    val moduleRoot by option("--module-root", help = "Glob marking extra module-root directories (repeatable), e.g. 'ios/Targets/*' for build systems without per-module build files").multiple()
 
     fun toAnalysisOptions() = AnalysisOptions(
         branch = branch, since = since, changeUnit = changeUnit,
         maxFilesPerCommit = maxFiles, groupWindowMin = groupWindowMin, extraExcludes = exclude,
+        moduleRoots = moduleRoot,
     )
 }
 

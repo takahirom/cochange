@@ -66,6 +66,9 @@ private val GUIDE_TOPICS: Map<String, String> = linkedMapOf(
              Read the banner first: which change unit was chosen and why. If it
              warns about a release-only branch or a shallow clone, fix that
              before trusting any numbers (see: cochange guide change-unit).
+             If findings show most files in one module like "<root>", the
+             build system isn't auto-detected: inspect the directory layout
+             and re-run with --module-root '<dir-pattern>/*'.
           2. cochange findings <repo> --json
              Findings are ordered source-first, strongest-first. Triage by
              type + impact; ignore build/docs categories on a first pass.
