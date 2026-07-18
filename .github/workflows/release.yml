@@ -11,6 +11,11 @@ permissions:
 jobs:
   release:
     runs-on: ubuntu-latest
+    # Isolated from normal CI: HOMEBREW_TAP_TOKEN lives as an *environment*
+    # secret on 'release', so pull-request workflows can never read it. Add
+    # protection rules (e.g. required reviewers) on the environment to gate
+    # releases further.
+    environment: release
     steps:
       - uses: actions/checkout@v4
 
