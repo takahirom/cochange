@@ -16,6 +16,10 @@ import kotlinx.serialization.json.Json
 data class RepoMetrics(
     /** Share of multi-file change units fully contained in one module. Null when the partition is uninformative. */
     val moduleLocality: Double?,
+    /** [moduleLocality] corrected for chance (kappa-style): how much the module structure contributes
+     *  beyond what random file placement with the same module sizes would already achieve.
+     *  ~0 on a monolith even when raw locality is high. */
+    val adjustedLocality: Double?,
     /** Share of multi-file change units not touching any hub file. Null when hubs cannot meaningfully exist (< 6 modules). */
     val hubFreeRate: Double?,
     /** Share of cross-module change units that avoid every recurring hotspot pair. Null when nothing crosses modules. */
@@ -64,6 +68,13 @@ object Metrics {
         val crossModule = multiFile.filter { change -> change.files.map(boundaries::moduleOf).toSet().size > 1 }
         val localUnits = multiFile.size - crossModule.size
 
+        // Chance-corrected locality: expected P(all k files land in one module)
+        // under random placement weighted by module activity shares.
+        val moduleShares = incidences.values.map { it.toDouble() / totalIncidences }
+        val expectedLocal = if (multiFile.isEmpty()) 0.0 else multiFile.sumOf { change ->
+            moduleShares.sumOf { p -> Math.pow(p, change.files.size.toDouble()) }
+        } / multiFile.size
+
         // Hubs: same predicate as UnstableHubDetector's defaults.
         val participation = HashMap<String, Int>()
         val partnerModules = HashMap<String, MutableSet<String>>()
@@ -102,6 +113,9 @@ object Metrics {
 
         return RepoMetrics(
             moduleLocality = if (partitionInformative) ratio(localUnits, multiFile.size) else null,
+            adjustedLocality = if (partitionInformative && expectedLocal < 0.999) {
+                (ratio(localUnits, multiFile.size) - expectedLocal) / (1 - expectedLocal)
+            } else null,
             hubFreeRate = if (hubsMeaningful) ratio(hubAvoiding, multiFile.size) else null,
             boundaryIntegrity = if (partitionInformative && crossModule.isNotEmpty()) {
                 ratio(hotspotFreeCross, crossModule.size)
@@ -141,6 +155,7 @@ object Metrics {
             distinctModules = m.distinctModules,
             lowResolution = m.lowResolution,
             moduleLocality = m.moduleLocality,
+            adjustedLocality = m.adjustedLocality,
             hubFreeRate = m.hubFreeRate,
             boundaryIntegrity = m.boundaryIntegrity,
             hubFiles = m.hubFiles,
@@ -164,6 +179,7 @@ data class MetricsReport(
     val distinctModules: Int,
     val lowResolution: Boolean,
     val moduleLocality: Double?,
+    val adjustedLocality: Double?,
     val hubFreeRate: Double?,
     val boundaryIntegrity: Double?,
     val hubFiles: List<String>,

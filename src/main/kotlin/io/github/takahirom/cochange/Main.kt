@@ -216,6 +216,7 @@ class MetricsCommand : CliktCommand(
         }
         echo("")
         echo("module locality        ${fmt(m.moduleLocality)}  (${m.localUnits}/${m.multiFileUnits} multi-file units contained in one module)")
+        echo("  adjusted for chance  ${fmt(m.adjustedLocality)}  (contribution of the module structure beyond random placement — a monolith scores ~0 here)")
         echo("hub-free change rate   ${fmt(m.hubFreeRate)}  (${m.hubAvoidingUnits}/${m.multiFileUnits} units avoid the ${m.hubFiles.size} hub files)" +
             if (m.hubFreeRate == null) "  [needs >= 6 modules]" else "")
         m.hubFiles.take(3).forEach { echo("                         hub: $it") }
@@ -225,7 +226,24 @@ class MetricsCommand : CliktCommand(
             echo("                         top hotspot: ${p.a.substringAfterLast('/')} x ${p.b.substringAfterLast('/')} — ~$perYear double-edits/year")
         }
         echo("")
-        echo("All scores are higher-is-better shares of change units. Trend them within one repository under the same options; absolute values are not comparable across repos.")
+        val adjusted = m.adjustedLocality
+        if (adjusted != null) {
+            val richStructure = m.effectiveModules >= 3
+            val respected = adjusted >= 0.5
+            val reading = when {
+                !richStructure && respected ->
+                    "little declared structure, well respected — the lever is extracting modules (cochange guide extract-module); expect effective modules to rise without adjusted locality collapsing"
+                richStructure && !respected ->
+                    "rich structure, frequently violated — the lever is aligning boundaries (cochange guide align-boundaries) and taming hubs (guide reduce-change-tax)"
+                richStructure && respected ->
+                    "rich structure, well respected — watch the trend; hotspot and hub diagnostics above point at the residual friction"
+                else ->
+                    "little structure and low compliance — start from clusters (cochange guide extract-module) before trusting these scores"
+            }
+            echo("reading: ${"%.1f".format(m.effectiveModules)} effective modules x ${"%.0f".format(adjusted * 100)}% adjusted locality — $reading")
+            echo("")
+        }
+        echo("All scores are higher-is-better shares of change units. Read module locality TOGETHER with effective modules: a coarse partition is easy to comply with, so raising structure and keeping compliance is the goal. Trend within one repository under the same options; absolute values are not comparable across repos.")
     }
 
     private fun fmt(v: Double?) = if (v == null) "  N/A" else "%5.1f%%".format(v * 100)
