@@ -191,6 +191,46 @@ class ClustersCommand : CliktCommand(
     }
 }
 
+class MetricsCommand : CliktCommand(
+    name = "metrics",
+    help = "Repository-level scores (all higher-is-better): module locality, hub-free change rate, boundary integrity.",
+) {
+    private val path by argument(help = "Path to the Git repository").default(".")
+    private val history by HistoryOptions()
+    private val asJson by option("--json", help = "Machine-readable output for recording runs over time").flag()
+
+    override fun run() {
+        val repo = File(path).canonicalFile
+        val setup = Analysis.contextFor(repo, history.toAnalysisOptions())
+        val m = Metrics.compute(setup.context)
+
+        if (asJson) {
+            echo(Metrics.encode(setup, m))
+            return
+        }
+        printBanner(setup, { msg, e -> echo(msg, err = e) }, compact = true)
+        echo("window: ${"%.1f".format(m.windowYears)} years  multi-file change units: ${m.multiFileUnits}  " +
+            "effective modules: ${"%.1f".format(m.effectiveModules)} (${m.distinctModules} distinct)")
+        if (m.lowResolution) {
+            echo("WARNING: low-resolution module partition (effective modules < ${Metrics.LOW_RESOLUTION}) — module-based scores below are weak evidence.", err = true)
+        }
+        echo("")
+        echo("module locality        ${fmt(m.moduleLocality)}  (${m.localUnits}/${m.multiFileUnits} multi-file units contained in one module)")
+        echo("hub-free change rate   ${fmt(m.hubFreeRate)}  (${m.hubAvoidingUnits}/${m.multiFileUnits} units avoid the ${m.hubFiles.size} hub files)" +
+            if (m.hubFreeRate == null) "  [needs >= 6 modules]" else "")
+        m.hubFiles.take(3).forEach { echo("                         hub: $it") }
+        echo("boundary integrity     ${fmt(m.boundaryIntegrity)}  (${m.hotspotFreeCrossUnits}/${m.crossModuleUnits} cross-module units avoid the ${m.boundaryHotspots} recurring hotspot pairs)")
+        m.topHotspot?.let { p ->
+            val perYear = (p.together / m.windowYears).toInt()
+            echo("                         top hotspot: ${p.a.substringAfterLast('/')} x ${p.b.substringAfterLast('/')} — ~$perYear double-edits/year")
+        }
+        echo("")
+        echo("All scores are higher-is-better shares of change units. Trend them within one repository under the same options; absolute values are not comparable across repos.")
+    }
+
+    private fun fmt(v: Double?) = if (v == null) "  N/A" else "%5.1f%%".format(v * 100)
+}
+
 class Detectors : CliktCommand(
     name = "detectors",
     help = "List what this tool can find.",
@@ -262,7 +302,7 @@ private fun printFindingsSummary(result: AnalysisResult, echo: (String) -> Unit)
 fun main(args: Array<String>) {
     try {
         Cochange()
-            .subcommands(Analyze(), Findings(), Inspect(), Pairs(), ClustersCommand(), Detectors(), GuideCommand())
+            .subcommands(Analyze(), Findings(), Inspect(), Pairs(), ClustersCommand(), MetricsCommand(), Detectors(), GuideCommand())
             .main(args)
     } catch (e: IllegalStateException) {
         // Expected operational failures (git errors, empty repos) — no stack trace.
