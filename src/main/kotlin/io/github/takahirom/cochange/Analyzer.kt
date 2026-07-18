@@ -11,16 +11,16 @@ class Analyzer(
 ) {
     constructor(minSupport: Int = 5, minConfidence: Double = 0.6) : this(defaultDetectors(minSupport, minConfidence))
 
+    fun analyze(context: AnalysisContext): List<Finding> =
+        detectors.flatMap { it.detect(context) }
+            .sortedBy { FileCategory.priority.indexOf(it.category) }
+            .mapIndexed { i, f -> f.copy(id = "finding-${i + 1}") }
+
     fun analyze(
         changes: List<LogicalChange>,
         boundaries: Boundaries,
         headFiles: Set<String>,
-    ): List<Finding> {
-        val context = AnalysisContext(changes, boundaries, headFiles)
-        return detectors.flatMap { it.detect(context) }
-            .sortedBy { FileCategory.priority.indexOf(it.category) }
-            .mapIndexed { i, f -> f.copy(id = "finding-${i + 1}") }
-    }
+    ): List<Finding> = analyze(AnalysisContext(changes, boundaries, headFiles))
 }
 
 internal fun pct(v: Double) = "${(v * 100).toInt()}%"
