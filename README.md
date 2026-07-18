@@ -21,6 +21,7 @@ cochange inspect finding-3 /path/to/repo               # full evidence for one f
 cochange pairs /path/to/repo --category source         # raw co-change pairs, strongest first
 cochange clusters /path/to/repo --category source      # de-facto change units (grouped pairs)
 cochange detectors                                     # what this tool can find
+cochange metrics /path/to/repo --json                  # repo-level scores (higher = better), for trending over time
 cochange guide                                         # playbooks: which commands, in what order, and how to read the results
 ```
 
@@ -92,6 +93,7 @@ Each cluster is a real change unit the module structure doesn't show: the sessio
 - **Consolidation candidates** — `boundary_mismatch` findings show code that the module structure separates but every change treats as one thing: candidates for moving into one module, or for an interface that absorbs the shared reason to change.
 - **Refactoring priority by change tax** — `unstable_hub` findings quantify which files sit inside the largest share of everyone's changes. A hub participating in 7% of all PRs is a measurable, recurring cost — worth restructuring before code that merely looks ugly.
 - **Migration tracking** — parallel old/new implementations showing up as one cluster means every fix is still being paid twice; the cluster disappearing is evidence the migration actually finished.
+- **Tracking refactors over time** — `metrics` condenses the whole analysis into three higher-is-better scores (module locality, hub-free change rate, boundary integrity) with applicability guardrails; run it on a schedule with the same options and `--json` to see whether refactors actually moved the change structure.
 - **AI-assisted architecture work** — `findings --json` and `inspect` give a coding agent the change structure of an unfamiliar codebase before it reads a single file: where to look, what to suspect, and which commits prove it.
 
 ## How it works

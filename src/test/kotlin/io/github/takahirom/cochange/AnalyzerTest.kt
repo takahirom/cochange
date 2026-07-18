@@ -2,6 +2,8 @@ package io.github.takahirom.cochange
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class AnalyzerTest {
@@ -173,5 +175,39 @@ class SplitCandidateTest {
         val changes = List(10) { change("Hub.kt", "a/A1.kt", "a/A2.kt", "b/B1.kt", "b/B2.kt") }
         val findings = SplitCandidateDetector().detect(AnalysisContext(changes, Boundaries(head), head))
         assertTrue(findings.isEmpty())
+    }
+}
+
+class MetricsTest {
+    private var t = 0L
+    private fun change(vararg files: String): LogicalChange {
+        t += 3600 * 24
+        return LogicalChange(listOf(Commit("h$t", "a", t, "m", files.toList())))
+    }
+
+    @Test
+    fun `locality and boundary integrity are unit shares and hubs need enough modules`() {
+        val head = setOf("a/build.gradle.kts", "b/build.gradle.kts", "a/A1.kt", "a/A2.kt", "b/B1.kt", "b/B2.kt")
+        val changes = buildList {
+            repeat(6) { add(change("a/A1.kt", "a/A2.kt")) }   // local
+            repeat(6) { add(change("a/A1.kt", "b/B1.kt")) }   // cross-module, hotspot pair (conf >= 0.6)
+            repeat(2) { add(change("a/A2.kt", "b/B2.kt")) }   // cross-module, below hotspot support
+        }
+        val m = Metrics.compute(AnalysisContext(changes, Boundaries(head), head))
+        assertEquals(6.0 / 14, m.moduleLocality)
+        assertEquals(1, m.boundaryHotspots)
+        assertEquals(2.0 / 8, m.boundaryIntegrity)
+        assertNull(m.hubFreeRate) // only 2 modules: hub predicate unsatisfiable
+        assertFalse(m.lowResolution) // effective modules ~1.7, above the 1.25 threshold
+    }
+
+    @Test
+    fun `single-module repo reports module scores as not applicable`() {
+        val head = setOf("app/build.gradle.kts", "app/A.kt", "app/B.kt")
+        val changes = List(10) { change("app/A.kt", "app/B.kt") }
+        val m = Metrics.compute(AnalysisContext(changes, Boundaries(head), head))
+        assertNull(m.moduleLocality)
+        assertNull(m.boundaryIntegrity)
+        assertTrue(m.lowResolution) // one effective module is below any resolution threshold
     }
 }
