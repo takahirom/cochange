@@ -47,11 +47,9 @@ object Analysis {
     )
 
     fun contextFor(repo: File, options: AnalysisOptions): AnalysisSetup {
-        runCatching { GitLog.runGit(repo, listOf("rev-parse", "--git-dir")) }
-            .getOrElse { error("$repo is not a git repository") }
+        check(GitLog.isRepository(repo)) { "$repo is not a git repository" }
         val rev = options.branch ?: "HEAD"
-        runCatching { GitLog.runGit(repo, listOf("rev-parse", "--verify", "--quiet", "$rev^{commit}")) }
-            .getOrElse { error("no commits found on '$rev' in $repo") }
+        check(GitLog.commitExists(repo, rev)) { "no commits found on '$rev' in $repo" }
 
         val resolved = ChangeUnits.resolve(options.changeUnit, repo, options.branch, options.since)
         val strategy = when (resolved.strategy) {

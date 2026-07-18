@@ -68,3 +68,24 @@ class ChangeUnitTest {
         }
     }
 }
+
+class ChangeUnitDecisionTest {
+    @Test
+    fun `merge-heavy mainline with small merges resolves to merge`() {
+        val resolved = ChangeUnits.decide(mainline = 100, merges = 90, total = 500)
+        assertTrue(resolved.strategy is MergeBasedChangeUnit)
+    }
+
+    @Test
+    fun `linear history resolves to author-window`() {
+        val resolved = ChangeUnits.decide(mainline = 100, merges = 5, total = 105)
+        assertTrue(resolved.strategy is AuthorWindowChangeUnit)
+    }
+
+    @Test
+    fun `release-only mainline falls back to author-window with a hint`() {
+        val resolved = ChangeUnits.decide(mainline = 10, merges = 8, total = 500)
+        assertTrue(resolved.strategy is AuthorWindowChangeUnit)
+        assertTrue(resolved.reason.contains("release-only"))
+    }
+}

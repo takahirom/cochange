@@ -42,13 +42,37 @@ object GitLog {
             .filter { it.isNotBlank() }
             .toSet()
 
+    fun isRepository(repo: File): Boolean =
+        runCatching { runGit(repo, listOf("rev-parse", "--git-dir")) }.isSuccess
+
+    fun commitExists(repo: File, rev: String): Boolean =
+        runCatching { runGit(repo, listOf("rev-parse", "--verify", "--quiet", "--end-of-options", "$rev^{commit}")) }.isSuccess
+
+    /** Number of commits reachable from the branch, optionally restricted to the first-parent chain or merges. */
+    fun countCommits(
+        repo: File,
+        branch: String?,
+        since: String?,
+        firstParent: Boolean = false,
+        mergesOnly: Boolean = false,
+    ): Long {
+        val args = buildList {
+            add("rev-list"); add("--count")
+            if (firstParent) add("--first-parent")
+            if (mergesOnly) add("--merges")
+            if (since != null) add("--since=$since")
+            add(branch ?: "HEAD")
+        }
+        return runGit(repo, args).trim().toLong()
+    }
+
     fun isShallow(repo: File): Boolean =
         runGit(repo, listOf("rev-parse", "--is-shallow-repository")).trim() == "true"
 
     fun headCommit(repo: File, branch: String?): String =
         runGit(repo, listOf("rev-parse", (branch ?: "HEAD"))).trim()
 
-    fun runGit(repo: File, args: List<String>): String {
+    internal fun runGit(repo: File, args: List<String>): String {
         // quotepath=off keeps non-ASCII paths literal instead of octal-escaped.
         val process = ProcessBuilder(listOf("git", "-c", "core.quotepath=off") + args)
             .directory(repo)

@@ -68,32 +68,32 @@ object ChangeUnits {
         "merge" -> ResolvedChangeUnit(MergeBasedChangeUnit(), "explicitly requested")
         "author-window" -> ResolvedChangeUnit(AuthorWindowChangeUnit(), "explicitly requested")
         "commit" -> ResolvedChangeUnit(CommitChangeUnit(), "explicitly requested")
-        "auto" -> {
-            val revRange = branch ?: "HEAD"
-            val sinceArgs = if (since != null) listOf("--since=$since") else emptyList()
-            fun count(vararg extra: String) =
-                GitLog.runGit(repo, listOf("rev-list", "--count") + extra + sinceArgs + revRange).trim().toLong()
-            val mainline = count("--first-parent")
-            val merges = count("--first-parent", "--merges")
-            val total = count()
-            val commitsPerMerge = if (merges > 0) (total - mainline).toDouble() / merges else 0.0
-            when {
-                mainline == 0L || merges.toDouble() / mainline < 0.3 -> ResolvedChangeUnit(
-                    AuthorWindowChangeUnit(),
-                    "auto: linear history (${pct(if (mainline > 0) merges.toDouble() / mainline else 0.0)} of mainline commits are merges)",
-                )
-                commitsPerMerge > RELEASE_BRANCH_COMMITS_PER_MERGE -> ResolvedChangeUnit(
-                    AuthorWindowChangeUnit(),
-                    "auto: mainline looks like a release-only branch (~${commitsPerMerge.toInt()} commits per merge) — " +
-                        "PR granularity likely lives on a development branch; consider --branch develop",
-                )
-                else -> ResolvedChangeUnit(
-                    MergeBasedChangeUnit(),
-                    "auto: merge-based history (${pct(merges.toDouble() / mainline)} of mainline commits are merges, " +
-                        "~${"%.1f".format(commitsPerMerge)} commits per merge)",
-                )
-            }
-        }
+        "auto" -> decide(
+            mainline = GitLog.countCommits(repo, branch, since, firstParent = true),
+            merges = GitLog.countCommits(repo, branch, since, firstParent = true, mergesOnly = true),
+            total = GitLog.countCommits(repo, branch, since),
+        )
         else -> error("Unknown change unit '$mode' (expected auto, merge, author-window, or commit)")
+    }
+
+    /** The AUTO decision as a pure function of commit counts, so it is testable without a repository. */
+    fun decide(mainline: Long, merges: Long, total: Long): ResolvedChangeUnit {
+        val commitsPerMerge = if (merges > 0) (total - mainline).toDouble() / merges else 0.0
+        return when {
+            mainline == 0L || merges.toDouble() / mainline < 0.3 -> ResolvedChangeUnit(
+                AuthorWindowChangeUnit(),
+                "auto: linear history (${pct(if (mainline > 0) merges.toDouble() / mainline else 0.0)} of mainline commits are merges)",
+            )
+            commitsPerMerge > RELEASE_BRANCH_COMMITS_PER_MERGE -> ResolvedChangeUnit(
+                AuthorWindowChangeUnit(),
+                "auto: mainline looks like a release-only branch (~${commitsPerMerge.toInt()} commits per merge) — " +
+                    "PR granularity likely lives on a development branch; consider --branch develop",
+            )
+            else -> ResolvedChangeUnit(
+                MergeBasedChangeUnit(),
+                "auto: merge-based history (${pct(merges.toDouble() / mainline)} of mainline commits are merges, " +
+                    "~${"%.1f".format(commitsPerMerge)} commits per merge)",
+            )
+        }
     }
 }
