@@ -11,16 +11,16 @@ class Analyzer(
 ) {
     constructor(minSupport: Int = 5, minConfidence: Double = 0.6) : this(defaultDetectors(minSupport, minConfidence))
 
+    fun analyze(context: AnalysisContext): List<Finding> =
+        detectors.flatMap { it.detect(context) }
+            .sortedBy { FileCategory.priority.indexOf(it.category) }
+            .mapIndexed { i, f -> f.copy(id = "finding-${i + 1}") }
+
     fun analyze(
         changes: List<LogicalChange>,
         boundaries: Boundaries,
         headFiles: Set<String>,
-    ): List<Finding> {
-        val context = AnalysisContext(changes, boundaries, headFiles)
-        return detectors.flatMap { it.detect(context) }
-            .sortedBy { FileCategory.priority.indexOf(it.category) }
-            .mapIndexed { i, f -> f.copy(id = "finding-${i + 1}") }
-    }
+    ): List<Finding> = analyze(AnalysisContext(changes, boundaries, headFiles))
 }
 
 internal fun pct(v: Double) = "${(v * 100).toInt()}%"
@@ -45,12 +45,11 @@ class BoundaryMismatchDetector(
         val candidates = context.pairs(minTogether = minSupport)
             .filter { it.a in context.headFiles && it.b in context.headFiles }
             .filter { boundaries.moduleOf(it.a) != boundaries.moduleOf(it.b) }
-            // Confidence of the stronger direction: P(other | rarer file changed).
-            .filter { confidence(it) >= minConfidence }
+            .filter { it.confidence >= minConfidence }
             // Companion pairs (Foo / DefaultFoo / FakeFoo) are expected to
             // co-change; unrelated names are the architecturally surprising ones.
             .sortedWith(compareBy<AnalysisContext.PairStat> { namesRelated(it.a, it.b) }
-                .thenByDescending { confidence(it) * it.together })
+                .thenByDescending { it.confidence * it.together })
             .toList()
             // Rank per category so build files and docs, which always co-change,
             // can't crowd production-code findings out of the list.
@@ -61,8 +60,6 @@ class BoundaryMismatchDetector(
 
         return candidates.map { pair -> toFinding(pair, context) }
     }
-
-    private fun confidence(p: AnalysisContext.PairStat) = p.together.toDouble() / minOf(p.countA, p.countB)
 
     companion object {
         private val decorators = listOf("default", "fake", "impl", "abstract", "base", "stub", "mock", "real")
@@ -86,7 +83,7 @@ class BoundaryMismatchDetector(
 
     private fun toFinding(p: AnalysisContext.PairStat, context: AnalysisContext): Finding {
         val boundaries = context.boundaries
-        val confidence = confidence(p)
+        val confidence = p.confidence
         val rarer = if (p.countA <= p.countB) p.a else p.b
         val other = if (p.countA <= p.countB) p.b else p.a
         val rarerCount = minOf(p.countA, p.countB)
@@ -96,7 +93,7 @@ class BoundaryMismatchDetector(
             if (p.a.substringAfterLast('/') == p.b.substringAfterLast('/')) path
             else path.substringAfterLast('/')
 
-        val reverse = p.together.toDouble() / otherCount
+        val reverse = p.reverse
         val counterSignals = buildList {
             if (reverse < 0.3) add(
                 "${name(other)} changed $otherCount times overall but only ${p.together} of those touched ${name(rarer)} " +

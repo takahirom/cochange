@@ -11,21 +11,24 @@ import java.security.MessageDigest
 object Store {
     private val json = Json { prettyPrint = true; ignoreUnknownKeys = true }
 
-    private fun dirFor(repo: File): File {
+    private val defaultBaseDir: File
+        get() = File(System.getProperty("user.home"), ".cache/cochange")
+
+    private fun dirFor(repo: File, baseDir: File): File {
         val digest = MessageDigest.getInstance("SHA-1")
             .digest(repo.canonicalPath.toByteArray())
             .joinToString("") { "%02x".format(it) }
-        return File(System.getProperty("user.home"), ".cache/cochange/$digest")
+        return File(baseDir, digest)
     }
 
-    fun save(repo: File, result: AnalysisResult) {
-        val dir = dirFor(repo)
+    fun save(repo: File, result: AnalysisResult, baseDir: File = defaultBaseDir) {
+        val dir = dirFor(repo, baseDir)
         dir.mkdirs()
         File(dir, "findings.json").writeText(json.encodeToString(AnalysisResult.serializer(), result))
     }
 
-    fun load(repo: File): AnalysisResult? {
-        val file = File(dirFor(repo), "findings.json")
+    fun load(repo: File, baseDir: File = defaultBaseDir): AnalysisResult? {
+        val file = File(dirFor(repo, baseDir), "findings.json")
         if (!file.exists()) return null
         return json.decodeFromString(AnalysisResult.serializer(), file.readText())
     }
