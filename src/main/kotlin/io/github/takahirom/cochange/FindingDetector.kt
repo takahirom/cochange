@@ -44,7 +44,16 @@ class AnalysisContext(
         }
     }
 
-    data class PairStat(val a: String, val b: String, val together: Int, val countA: Int, val countB: Int)
+    data class PairStat(val a: String, val b: String, val together: Int, val countA: Int, val countB: Int) {
+        /** P(other | rarer): co-change probability in the stronger direction. */
+        val confidence: Double get() = together.toDouble() / minOf(countA, countB)
+
+        /** P(rarer | other): the weaker direction of the same pair. */
+        val reverse: Double get() = together.toDouble() / maxOf(countA, countB)
+
+        /** Symmetric similarity: together / changes touching either file. */
+        val jaccard: Double get() = together.toDouble() / (countA + countB - together)
+    }
 
     fun changeCount(path: String): Int = pathToId[path]?.let { fileChangeCountById[it] } ?: 0
 

@@ -23,7 +23,7 @@ object Clusters {
         val edges = context.pairs(minTogether = minSupport)
             .filter { it.a in context.headFiles && it.b in context.headFiles }
             .filter { fileFilter(it.a) && fileFilter(it.b) }
-            .map { Edge(it.a, it.b, it.together, it.together.toDouble() / (it.countA + it.countB - it.together)) }
+            .map { Edge(it.a, it.b, it.together, it.jaccard) }
             .filter { it.jaccard >= minConfidence }
             .toList()
 

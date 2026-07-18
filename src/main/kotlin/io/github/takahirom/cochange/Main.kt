@@ -4,6 +4,8 @@ import com.github.ajalt.clikt.core.CliktCommand
 import com.github.ajalt.clikt.core.subcommands
 import com.github.ajalt.clikt.parameters.arguments.argument
 import com.github.ajalt.clikt.parameters.arguments.default
+import com.github.ajalt.clikt.parameters.groups.OptionGroup
+import com.github.ajalt.clikt.parameters.groups.provideDelegate
 import com.github.ajalt.clikt.parameters.options.default
 import com.github.ajalt.clikt.parameters.options.flag
 import com.github.ajalt.clikt.parameters.options.multiple
@@ -27,28 +29,35 @@ class Cochange : CliktCommand(
     override fun run() = Unit
 }
 
+/** History-reading options shared by every command that walks the git log. */
+class HistoryOptions : OptionGroup(name = "History options") {
+    val branch by option("--branch", help = "Branch to analyze (default: HEAD)")
+    val since by option("--since", help = "History window, e.g. '2 years ago' (git --since syntax)")
+    val changeUnit by option("--change-unit", help = "What counts as one change: auto, merge (first-parent, one merge = one PR), author-window, commit").default("auto")
+    val maxFiles by option("--max-files", help = "Skip commits touching more files than this").int().restrictTo(min = 1).default(50)
+    val groupWindowMin by option("--group-window", help = "Minutes within which same-author commits form one logical change (author-window mode)").long().restrictTo(1L..10_000L).default(30)
+    val exclude by option("--exclude", help = "Glob to exclude (repeatable, adds to defaults)").multiple()
+
+    fun toAnalysisOptions() = AnalysisOptions(
+        branch = branch, since = since, changeUnit = changeUnit,
+        maxFilesPerCommit = maxFiles, groupWindowMin = groupWindowMin, extraExcludes = exclude,
+    )
+}
+
 class Analyze : CliktCommand(
     name = "analyze",
     help = "Analyze a repository's change history and produce findings.",
 ) {
     private val path by argument(help = "Path to the Git repository").default(".")
-    private val branch by option("--branch", help = "Branch to analyze (default: HEAD)")
-    private val since by option("--since", help = "History window, e.g. '2 years ago' (git --since syntax)")
-    private val changeUnit by option("--change-unit", help = "What counts as one change: auto, merge (first-parent, one merge = one PR), author-window, commit").default("auto")
-    private val maxFiles by option("--max-files", help = "Skip commits touching more files than this").int().restrictTo(min = 1).default(50)
-    private val groupWindowMin by option("--group-window", help = "Minutes within which same-author commits form one logical change (author-window mode)").long().restrictTo(1L..10_000L).default(30)
+    private val history by HistoryOptions()
     private val minSupport by option("--min-support", help = "Minimum co-change count for a pair finding").int().restrictTo(min = 1).default(5)
-    private val minConfidence by option("--min-confidence", help = "Minimum co-change ratio for a pair finding").double().restrictTo(0.0, 1.0).default(0.6)
-    private val exclude by option("--exclude", help = "Glob to exclude (repeatable, adds to defaults)").multiple()
+    private val minConfidence by option("--min-confidence", help = "Minimum co-change ratio for a pair finding, P(other | rarer)").double().restrictTo(0.0, 1.0).default(0.6)
     private val asJson by option("--json", help = "Print the full result as JSON").flag()
 
     override fun run() {
         val repo = File(path).canonicalFile
         val start = System.currentTimeMillis()
-        val setup = Analysis.contextFor(repo, AnalysisOptions(
-            branch = branch, since = since, changeUnit = changeUnit,
-            maxFilesPerCommit = maxFiles, groupWindowMin = groupWindowMin, extraExcludes = exclude,
-        ))
+        val setup = Analysis.contextFor(repo, history.toAnalysisOptions())
         if (!asJson) {
             printBanner(setup, { m, e -> echo(m, err = e) })
             echo("thresholds: min-support=$minSupport min-confidence=$minConfidence")
@@ -59,7 +68,7 @@ class Analyze : CliktCommand(
 
         val result = AnalysisResult(
             repo = repo.path,
-            branch = branch ?: "HEAD",
+            branch = history.branch ?: "HEAD",
             headCommit = setup.headCommit,
             shallow = setup.shallow,
             changeUnit = setup.changeUnitName,
@@ -111,20 +120,15 @@ class Pairs : CliktCommand(
     help = "List raw co-change pairs (no finding thresholds), strongest first.",
 ) {
     private val path by argument(help = "Path to the Git repository").default(".")
-    private val branch by option("--branch")
-    private val since by option("--since", help = "History window, e.g. '2 years ago'")
-    private val changeUnit by option("--change-unit").default("auto")
-    private val minSupport by option("--min-support", help = "Minimum co-change count to list").int().default(5)
-    private val top by option("--top", help = "Number of pairs to show").int().default(50)
+    private val history by HistoryOptions()
+    private val minSupport by option("--min-support", help = "Minimum co-change count to list").int().restrictTo(min = 1).default(5)
+    private val top by option("--top", help = "Number of pairs to show").int().restrictTo(min = 1).default(50)
     private val file by option("--file", help = "Only pairs involving a path containing this substring")
     private val category by option("--category", help = "Only pairs in this category (source, config, build, docs)")
-    private val exclude by option("--exclude").multiple()
 
     override fun run() {
         val repo = File(path).canonicalFile
-        val setup = Analysis.contextFor(repo, AnalysisOptions(
-            branch = branch, since = since, changeUnit = changeUnit, extraExcludes = exclude,
-        ))
+        val setup = Analysis.contextFor(repo, history.toAnalysisOptions())
         val context = setup.context
         val headFiles = context.headFiles
         val boundaries = context.boundaries
@@ -138,7 +142,7 @@ class Pairs : CliktCommand(
             .sortedByDescending { it.together }
             .take(top)
             .forEach { p ->
-                val conf = p.together.toDouble() / minOf(p.countA, p.countB)
+                val conf = p.confidence
                 val modA = boundaries.moduleOf(p.a)
                 val modB = boundaries.moduleOf(p.b)
                 val modules = if (modA == modB) "same ($modA)" else "$modA <-> $modB"
@@ -153,30 +157,25 @@ class ClustersCommand : CliktCommand(
     help = "Group co-changing files into clusters (connected components of strong co-change pairs; files may connect transitively).",
 ) {
     private val path by argument(help = "Path to the Git repository").default(".")
-    private val branch by option("--branch")
-    private val since by option("--since", help = "History window, e.g. '2 years ago'")
-    private val changeUnit by option("--change-unit").default("auto")
+    private val history by HistoryOptions()
     private val minSupport by option("--min-support", help = "Minimum co-change count for an edge").int().restrictTo(min = 1).default(10)
-    private val minConfidence by option("--min-confidence", help = "Minimum Jaccard similarity for an edge (together / either)").double().restrictTo(0.0, 1.0).default(0.25)
-    private val top by option("--top", help = "Number of clusters to show").int().default(10)
+    private val minJaccard by option("--min-jaccard", help = "Minimum Jaccard similarity for an edge (together / either)").double().restrictTo(0.0, 1.0).default(0.25)
+    private val top by option("--top", help = "Number of clusters to show").int().restrictTo(min = 1).default(10)
     private val category by option("--category", help = "Only files in this category (source, config, build, docs)")
-    private val exclude by option("--exclude").multiple()
 
     override fun run() {
         val repo = File(path).canonicalFile
-        val setup = Analysis.contextFor(repo, AnalysisOptions(
-            branch = branch, since = since, changeUnit = changeUnit, extraExcludes = exclude,
-        ))
+        val setup = Analysis.contextFor(repo, history.toAnalysisOptions())
         val context = setup.context
         val boundaries = context.boundaries
-        val clusters = Clusters.build(context, minSupport, minConfidence) {
+        val clusters = Clusters.build(context, minSupport, minJaccard) {
             category == null || FileCategory.of(it) == category
         }
 
         printBanner(setup, { m, e -> echo(m, err = e) }, compact = true)
-        echo("edge thresholds: min-support=$minSupport min-confidence=$minConfidence")
+        echo("edge thresholds: min-support=$minSupport min-jaccard=$minJaccard")
         if (clusters.isEmpty()) {
-            echo("No clusters above thresholds. Try lowering --min-support / --min-confidence.")
+            echo("No clusters above thresholds. Try lowering --min-support / --min-jaccard.")
             return
         }
         clusters.take(top).forEachIndexed { i, cluster ->
