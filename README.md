@@ -30,7 +30,7 @@ The only required input is a Git repository — zero config, language-agnostic, 
 
 ## Motivation
 
-Plenty of people have said some version of the tagline above*, and I think they're right — and whether it actually holds in your codebase is already recorded in your Git history. So this tool reads it from there.
+"Code that changes together should live together" — plenty of people have said some version of this principle*, and I think they're right. Whether it actually holds in your codebase is already recorded in your Git history, so this tool reads it from there.
 
 \* Constantine's cohesion (1968–), Robert C. Martin's Common Closure Principle (*"gather into components those classes that change for the same reasons and at the same times"*), Kent Beck's [*"put everything that changes at the same time in one place"*](https://newsletter.kentbeck.com/p/cohesion), and the change-coupling research line from Gall et al. (ICSM 1998) through Tornhill's *Your Code as a Crime Scene*.
 
