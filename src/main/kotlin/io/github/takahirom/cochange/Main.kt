@@ -222,7 +222,7 @@ class MetricsCommand : CliktCommand(
         m.hubFiles.take(3).forEach { echo("                         hub: $it") }
         echo("boundary integrity     ${fmt(m.boundaryIntegrity)}  (${m.hotspotFreeCrossUnits}/${m.crossModuleUnits} cross-module units avoid the ${m.boundaryHotspots} recurring hotspot pairs)")
         m.topHotspot?.let { p ->
-            val perYear = (p.together / m.windowYears).toInt()
+            val perYear = "%.1f".format(p.together / m.windowYears)
             echo("                         top hotspot: ${p.a.substringAfterLast('/')} x ${p.b.substringAfterLast('/')} — ~$perYear double-edits/year")
         }
         echo("")

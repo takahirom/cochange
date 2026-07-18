@@ -2,6 +2,8 @@ package io.github.takahirom.cochange
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class AnalyzerTest {
@@ -195,8 +197,8 @@ class MetricsTest {
         assertEquals(6.0 / 14, m.moduleLocality)
         assertEquals(1, m.boundaryHotspots)
         assertEquals(2.0 / 8, m.boundaryIntegrity)
-        assertEquals(null, m.hubFreeRate) // only 2 modules: hub predicate unsatisfiable
-        assertTrue(!m.lowResolution || m.effectiveModules < Metrics.LOW_RESOLUTION)
+        assertNull(m.hubFreeRate) // only 2 modules: hub predicate unsatisfiable
+        assertFalse(m.lowResolution) // effective modules ~1.7, above the 1.25 threshold
     }
 
     @Test
@@ -204,7 +206,8 @@ class MetricsTest {
         val head = setOf("app/build.gradle.kts", "app/A.kt", "app/B.kt")
         val changes = List(10) { change("app/A.kt", "app/B.kt") }
         val m = Metrics.compute(AnalysisContext(changes, Boundaries(head), head))
-        assertEquals(null, m.moduleLocality)
-        assertEquals(null, m.boundaryIntegrity)
+        assertNull(m.moduleLocality)
+        assertNull(m.boundaryIntegrity)
+        assertTrue(m.lowResolution) // one effective module is below any resolution threshold
     }
 }

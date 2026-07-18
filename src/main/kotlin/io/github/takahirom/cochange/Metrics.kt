@@ -1,5 +1,6 @@
 package io.github.takahirom.cochange
 
+import kotlin.math.pow
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 
@@ -72,7 +73,7 @@ object Metrics {
         // under random placement weighted by module activity shares.
         val moduleShares = incidences.values.map { it.toDouble() / totalIncidences }
         val expectedLocal = if (multiFile.isEmpty()) 0.0 else multiFile.sumOf { change ->
-            moduleShares.sumOf { p -> Math.pow(p, change.files.size.toDouble()) }
+            moduleShares.sumOf { p -> p.pow(change.files.size) }
         } / multiFile.size
 
         // Hubs: same predicate as UnstableHubDetector's defaults.
@@ -122,7 +123,7 @@ object Metrics {
             } else null,
             effectiveModules = effectiveModules,
             distinctModules = incidences.size,
-            lowResolution = partitionInformative && effectiveModules < LOW_RESOLUTION,
+            lowResolution = effectiveModules < LOW_RESOLUTION,
             multiFileUnits = multiFile.size,
             crossModuleUnits = crossModule.size,
             localUnits = localUnits,
@@ -160,7 +161,7 @@ object Metrics {
             boundaryIntegrity = m.boundaryIntegrity,
             hubFiles = m.hubFiles,
             boundaryHotspots = m.boundaryHotspots,
-            topHotspot = m.topHotspot?.let { "${it.a} + ${it.b} (${it.together} together)" },
+            topHotspot = m.topHotspot?.let { HotspotRef(it.a, it.b, it.together) },
         ),
     )
 }
@@ -184,5 +185,8 @@ data class MetricsReport(
     val boundaryIntegrity: Double?,
     val hubFiles: List<String>,
     val boundaryHotspots: Int,
-    val topHotspot: String?,
+    val topHotspot: HotspotRef?,
 )
+
+@Serializable
+data class HotspotRef(val a: String, val b: String, val together: Int)
