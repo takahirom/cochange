@@ -97,6 +97,27 @@ Each cluster is a real change unit the module structure doesn't show: the sessio
 
 `inspect` returns JSON with observation / interpretations / counterSignals / supportingChanges (commit hashes), giving an AI a concrete starting point before it reads any code.
 
+`metrics` condenses the whole analysis into a few higher-is-better scores plus a one-line reading of what to do next — meant to be trended within one repo (same options, `--json`) rather than compared across repos:
+
+```text
+$ cochange metrics conference-app-2025
+window: 0.3 years  multi-file change units: 244  effective modules: 13.1 (34 distinct)
+
+module locality         30.3%  (74/244 multi-file units contained in one module)
+  adjusted for chance   28.9%  (contribution of the module structure beyond random placement — a monolith scores ~0 here)
+hub-free change rate    82.4%  (201/244 units avoid the 2 hub files)
+                         hub: gradle/libs.versions.toml
+                         hub: .../KaigiAppUi.androidJvm.kt
+boundary integrity      84.1%  (143/170 cross-module units avoid the 9 recurring hotspot pairs)
+                         top hotspot: build.gradle.kts x libs.versions.toml — ~35.7 double-edits/year
+
+reading: 13.1 effective modules x 29% adjusted locality — rich structure, frequently
+  violated — the lever is aligning boundaries (cochange guide align-boundaries) and
+  taming hubs (guide reduce-change-tax)
+```
+
+`adjusted for chance` is the key number: reading it together with `effective modules` separates "few modules, easy to comply with" from "many modules, actually respected", so the score can't be gamed by a coarser partition.
+
 ## What to use it for
 
 - **Module extraction candidates** — `clusters` shows the de-facto change units inside a monolith. A self-contained cluster (screen + logic + models + tests that always move together) is a ready-made module boundary proposal.
