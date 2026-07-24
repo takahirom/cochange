@@ -293,9 +293,13 @@ private fun loadOrFail(path: String): AnalysisResult {
 private fun printBanner(setup: AnalysisSetup, echo: (String, Boolean) -> Unit, compact: Boolean = false) {
     fun out(line: String) = echo(line, false)
     fun err(line: String) = echo(line, true)
-    if (!compact) {
-        out("repo: ${setup.repo}")
-        out("branch: ${setup.options.branch ?: "HEAD"}  since: ${setup.options.since ?: "(all history)"}")
+    val since = setup.options.since
+    if (!compact) out("repo: ${setup.repo}")
+    // Compact commands (clusters/metrics/pairs) also recompute from the git log, so the
+    // window must stay visible here too or an unset --since silently means all history.
+    out("branch: ${setup.options.branch ?: "HEAD"}  since: ${since ?: "(all history)"}")
+    if (since == null) {
+        err("note: no --since — computing over all history; pass --since (e.g. '1 year ago') to match the window used elsewhere.")
     }
     if (setup.shallow) err("WARNING: shallow clone — history is truncated, so every ratio below is biased. Run 'git fetch --unshallow' for accurate results.")
     out("change unit: ${setup.changeUnitName} (${setup.changeUnitReason})" +
