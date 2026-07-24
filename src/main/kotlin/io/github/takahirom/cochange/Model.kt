@@ -30,6 +30,8 @@ data class Finding(
     val summary: String,
     val confidence: Double,
     val impact: String,
+    /** Rough effort to act on this finding (none/low/medium/high), so it can be read for ROI, not just impact. Empty when not estimated. */
+    val effort: String = "",
     val detail: FindingDetail,
 )
 

@@ -176,6 +176,37 @@ class NamesRelatedTest {
     }
 }
 
+class CouplingKindTest {
+    @Test
+    fun `cross-language coupling is high effort even when the names match`() {
+        // Screen.kt / Screen.swift: platform-parallel, not a cheap companion pair.
+        val e = CouplingKind.of("android/Screen.kt", "ios/Screen.swift", FileCategory.SOURCE, namesRelated = true)
+        assertEquals("cross-language", e.kind)
+        assertEquals("high", e.effort)
+    }
+
+    @Test
+    fun `same-language interface-impl pair is low effort`() {
+        val e = CouplingKind.of("domain/PaymentRepository.kt", "data/DefaultPaymentRepository.kt", FileCategory.SOURCE, namesRelated = true)
+        assertEquals("companion", e.kind)
+        assertEquals("low", e.effort)
+    }
+
+    @Test
+    fun `unrelated same-language coupling is medium effort`() {
+        val e = CouplingKind.of("app/CheckoutScreen.kt", "core/PricingRules.kt", FileCategory.SOURCE, namesRelated = false)
+        assertEquals("same-language", e.kind)
+        assertEquals("medium", e.effort)
+    }
+
+    @Test
+    fun `generated coupling needs no fixing`() {
+        val e = CouplingKind.of("app/Foo.kt", "gen/Foo.mockolo.kt", FileCategory.GENERATED, namesRelated = true)
+        assertEquals("generated", e.kind)
+        assertEquals("none", e.effort)
+    }
+}
+
 class ClustersTest {
     private var t = 0L
     private fun change(vararg files: String): LogicalChange {
