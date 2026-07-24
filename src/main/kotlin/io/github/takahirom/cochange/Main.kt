@@ -164,6 +164,7 @@ class ClustersCommand : CliktCommand(
     private val minJaccard by option("--min-jaccard", help = "Minimum Jaccard similarity for an edge (together / either)").double().restrictTo(0.0, 1.0).default(0.25)
     private val top by option("--top", help = "Number of clusters to show").int().restrictTo(min = 1).default(10)
     private val category by option("--category", help = "Only files in this category (source, config, build, docs)")
+    private val show by option("--show", help = "Expand one cluster (by its number) to its full file list").int().restrictTo(min = 1)
 
     override fun run() {
         val repo = File(path).canonicalFile
@@ -180,16 +181,45 @@ class ClustersCommand : CliktCommand(
             echo("No clusters above thresholds. Try lowering --min-support / --min-jaccard.")
             return
         }
-        clusters.take(top).forEachIndexed { i, cluster ->
+
+        fun strongestOf(cluster: Clusters.Cluster): String {
+            val s = cluster.edges.first()
+            return "${s.a.substringAfterLast('/')} x ${s.b.substringAfterLast('/')} " +
+                "(${s.together} together, jaccard ${"%.2f".format(s.jaccard)})"
+        }
+
+        val showIdx = show
+        if (showIdx != null) {
+            if (showIdx > clusters.size) {
+                echo("Only ${clusters.size} clusters above thresholds; --show $showIdx is out of range.")
+                return
+            }
+            val cluster = clusters[showIdx - 1]
             echo("")
-            echo("cluster ${i + 1}: ${cluster.files.size} files, ${cluster.edges.size} strong pairs (pair-support volume ${cluster.pairSupportVolume})")
+            echo("cluster $showIdx: ${cluster.files.size} files, ${cluster.edges.size} strong pairs (pair-support volume ${cluster.pairSupportVolume})")
             for (file in cluster.files) {
                 echo("  ${file} (${context.changeCount(file)} changes, ${boundaries.moduleOf(file)})")
             }
-            val strongest = cluster.edges.first()
-            echo("  strongest pair: ${strongest.a.substringAfterLast('/')} x ${strongest.b.substringAfterLast('/')} " +
-                "(${strongest.together} together, jaccard ${"%.2f".format(strongest.jaccard)})")
+            echo("  strongest pair: ${strongestOf(cluster)}")
+            return
         }
+
+        // Overview: one headline per cluster. The full file list is one --show away,
+        // so a big monolith doesn't dump thousands of lines by default.
+        clusters.take(top).forEachIndexed { i, cluster ->
+            val modules = cluster.files.map { boundaries.moduleOf(it) }.distinct()
+            val span = if (modules.size == 1) "1 module (${modules.first()})" else "${modules.size} modules"
+            echo("")
+            echo("cluster ${i + 1}: ${cluster.files.size} files across $span, ${cluster.edges.size} strong pairs (pair-support volume ${cluster.pairSupportVolume})")
+            echo("  strongest pair: ${strongestOf(cluster)}")
+        }
+        echo("")
+        val opts = buildString {
+            history.since?.let { append(" --since \"$it\"") }
+            append(" --min-support $minSupport --min-jaccard $minJaccard")
+            category?.let { append(" --category $it") }
+        }
+        echo("Next: cochange clusters $path --show 1$opts — full file list for a cluster (keep these options to address the same one)")
     }
 }
 
