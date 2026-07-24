@@ -64,7 +64,7 @@ object Analysis {
         val excludes = DEFAULT_EXCLUDES + options.extraExcludes
         val changes = strategy.changeUnits(repo, options.branch, options.since, excludes)
         val headFiles = GitLog.headFiles(repo, options.branch)
-        val generated = GitLog.generatedFiles(repo, headFiles)
+        val generated = GitLog.generatedFiles(repo, rev, headFiles)
         return AnalysisSetup(
             repo = repo,
             options = options,

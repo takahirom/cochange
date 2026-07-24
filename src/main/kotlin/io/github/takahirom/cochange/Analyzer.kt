@@ -144,6 +144,7 @@ class UnstableHubDetector(
     private val minParticipation: Int = 20,
     private val minModuleSpread: Int = 5,
     private val maxFindings: Int = 10,
+    private val maxOtherCategoryFindings: Int = 5,
 ) : FindingDetector {
     override val type = "unstable_hub"
     override val description =
@@ -171,7 +172,13 @@ class UnstableHubDetector(
                     (partnerModules[file]?.size ?: 0) >= minModuleSpread
             }
             .sortedByDescending { (file, count) -> count.toLong() * partnerModules[file]!!.size }
-            .take(maxFindings)
+            .toList()
+            // Cap per category (like boundary_mismatch) so generated/build/docs hubs
+            // can't consume every slot and push source hubs out of the top findings.
+            .groupBy { (file, _) -> context.categoryOf(file) }
+            .flatMap { (category, list) ->
+                list.take(if (category == FileCategory.SOURCE) maxFindings else maxOtherCategoryFindings)
+            }
             .map { (file, count) ->
                 val rate = count.toDouble() / multiFileChanges.size
                 val modules = partnerModules[file]!!.size

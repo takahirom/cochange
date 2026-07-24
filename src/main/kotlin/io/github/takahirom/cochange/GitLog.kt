@@ -48,10 +48,16 @@ object GitLog {
      * `git check-attr` so attribute precedence and negations are honored exactly
      * instead of re-implemented. Returns empty if the repo declares nothing.
      */
-    fun generatedFiles(repo: File, headFiles: Set<String>): Set<String> {
+    fun generatedFiles(repo: File, rev: String, headFiles: Set<String>): Set<String> {
         if (headFiles.isEmpty()) return emptySet()
+        val input = headFiles.joinToString("\n")
+        // --source reads .gitattributes from the analyzed revision rather than the
+        // working tree, which may be a different branch or carry local edits. Fall
+        // back to working-tree attributes for git < 2.40, which lacks --source.
         val output = runCatching {
-            runGit(repo, listOf("check-attr", "linguist-generated", "--stdin"), stdin = headFiles.joinToString("\n"))
+            runGit(repo, listOf("check-attr", "--source=$rev", "linguist-generated", "--stdin"), stdin = input)
+        }.recoverCatching {
+            runGit(repo, listOf("check-attr", "linguist-generated", "--stdin"), stdin = input)
         }.getOrElse { return emptySet() }
         val marker = ": linguist-generated: "
         val result = HashSet<String>()
