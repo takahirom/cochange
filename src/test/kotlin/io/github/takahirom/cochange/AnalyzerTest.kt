@@ -205,6 +205,15 @@ class CouplingKindTest {
         assertEquals("generated", e.kind)
         assertEquals("none", e.effort)
     }
+
+    @Test
+    fun `an unrecognized language is not understated as companion or same-language`() {
+        // .php is unmapped; the pair still crosses a language boundary and must not
+        // be labelled low-effort companion just because the names match.
+        val e = CouplingKind.of("web/Foo.kt", "legacy/Foo.php", FileCategory.SOURCE, namesRelated = true)
+        assertEquals("cross-language", e.kind)
+        assertEquals("high", e.effort)
+    }
 }
 
 class ClustersTest {

@@ -48,7 +48,7 @@ change unit: merge (auto: merge-based history (94% of mainline commits are merge
 
 Analyzed 381 commits as 381 change units (unit: merge) in 0.5s
 
-finding-1 [boundary_mismatch/source] impact=medium confidence=1.0
+finding-1 [boundary_mismatch/source] impact=medium effort=medium confidence=1.0
   App.kt (app-android) and AndroidAppGraph.kt (app-shared) evolve as one
   change unit across a module boundary
   5 of 5 changes to AndroidAppGraph.kt also changed App.kt (100%),

@@ -34,34 +34,44 @@ internal fun round2(v: Double) = kotlin.math.round(v * 100) / 100
 object CouplingKind {
     data class Estimate(val kind: String, val effort: String, val note: String)
 
-    private fun lang(path: String): String? = when (path.substringAfterLast('.', "").lowercase()) {
-        "kt", "kts", "java" -> "jvm"
-        "swift" -> "swift"
-        "m", "mm" -> "objc"
-        "ts", "tsx", "js", "jsx" -> "js"
-        "py" -> "py"
-        "go" -> "go"
-        "rs" -> "rust"
-        "dart" -> "dart"
-        "rb" -> "ruby"
-        "cpp", "cc", "cxx", "hpp", "hxx" -> "cpp"
-        else -> null
+    /**
+     * A comparison key for a file's language. Known extensions map to a language
+     * family; unknown ones fall back to the raw extension so an unrecognized
+     * language is never silently treated as "same" as a different one.
+     */
+    private fun langKey(path: String): String {
+        val ext = path.substringAfterLast('.', "").lowercase()
+        return when (ext) {
+            "kt", "kts", "java" -> "jvm"
+            "swift" -> "swift"
+            "m", "mm" -> "objc"
+            "ts", "tsx", "js", "jsx" -> "js"
+            "py", "pyi" -> "py"
+            "go" -> "go"
+            "rs" -> "rust"
+            "dart" -> "dart"
+            "rb" -> "ruby"
+            "cpp", "cc", "cxx", "hpp", "hxx" -> "cpp"
+            else -> ext.ifEmpty { "?" }
+        }
     }
 
     fun of(a: String, b: String, category: String, namesRelated: Boolean): Estimate {
-        val la = lang(a)
-        val lb = lang(b)
+        val ka = langKey(a)
+        val kb = langKey(b)
         return when {
             category == FileCategory.GENERATED -> Estimate(
                 "generated", "none",
                 "one side is generated — the coupling is inherent; fixing the source regenerates it, so this is not a refactoring target.",
             )
-            // Cross-language is checked before companion: two platform-parallel files
-            // often share a name (Screen.kt / Screen.swift), but that is the expensive
-            // cross-platform coupling, not a cheap same-language interface/impl pair.
-            la != null && lb != null && la != lb -> Estimate(
+            // Different language keys → cross-language. Checked before companion:
+            // two platform-parallel files often share a name (Screen.kt / Screen.swift),
+            // but that is the expensive cross-platform coupling, not a cheap companion.
+            // Unknown extensions compare by their raw extension, so an unrecognized
+            // language pair (e.g. Foo.kt / Foo.php) is not understated as low effort.
+            ka != kb -> Estimate(
                 "cross-language", "high",
-                "the two files are in different languages ($la vs $lb) — a design coupling across a platform boundary is expensive to break; weigh it against the impact before committing.",
+                "the two files are in different languages ($ka vs $kb) — a design coupling across a platform boundary is expensive to break; weigh it against the impact before committing.",
             )
             namesRelated -> Estimate(
                 "companion", "low",
