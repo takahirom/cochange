@@ -214,6 +214,22 @@ class CouplingKindTest {
         assertEquals("cross-language", e.kind)
         assertEquals("high", e.effort)
     }
+
+    @Test
+    fun `boundary mismatch finding carries the effort estimate end to end`() {
+        var t = 0L
+        fun commit(vararg files: String): Commit { t += 3600 * 24; return Commit("h$t", "alice", t, "m", files.toList()) }
+        // Kotlin↔Swift across modules: the detector must wire the estimate through.
+        val head = setOf("android/Screen.kt", "ios/Screen.swift")
+        val changes = List(8) { LogicalChange(listOf(commit("android/Screen.kt", "ios/Screen.swift"))) }
+        val finding = Analyzer(minSupport = 5, minConfidence = 0.6)
+            .analyze(changes, Boundaries(head), head)
+            .single { it.type == "boundary_mismatch" }
+        assertEquals("high", finding.effort)
+        assertEquals("cross-language", finding.detail.metrics["couplingKind"])
+        assertEquals("high", finding.detail.metrics["effort"])
+        assertTrue(finding.detail.interpretations.any { it.startsWith("Effort (cross-language):") })
+    }
 }
 
 class ClustersTest {
