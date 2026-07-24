@@ -2,7 +2,14 @@
 
 **Code that changes together should live together.**
 
-A CLI that discovers the *actual* change units of a codebase from Git history and presents them as evidence-backed findings for humans and AI. It looks at what actually changes together, not at static dependencies.
+cochange reads your Git history to find code that **changes together but lives apart** — the coupling your module structure hides — and turns it into evidence-backed findings for humans and AI. It looks at what actually changes together, not at static dependencies.
+
+## What you get
+
+- **Where to start refactoring — by evidence, not vibes.** Which files drag the most changes across module boundaries, with the commits that prove it (`analyze`, `findings`).
+- **Module boundaries the code is asking for.** Files that always move together — ready-made "extract a module" proposals hiding in a monolith (`clusters`).
+- **A structure score you can trend.** The whole history reduced to a few higher-is-better numbers, so you can tell if a refactor actually helped (`metrics`).
+- **A map for AI agents.** `--json` + `guide` hand a coding agent the change structure of an unfamiliar repo before it reads a line.
 
 ## Install
 
