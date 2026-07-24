@@ -176,6 +176,62 @@ class NamesRelatedTest {
     }
 }
 
+class CouplingKindTest {
+    @Test
+    fun `cross-language coupling is high effort even when the names match`() {
+        // Screen.kt / Screen.swift: platform-parallel, not a cheap companion pair.
+        val e = CouplingKind.of("android/Screen.kt", "ios/Screen.swift", FileCategory.SOURCE, namesRelated = true)
+        assertEquals("cross-language", e.kind)
+        assertEquals("high", e.effort)
+    }
+
+    @Test
+    fun `same-language interface-impl pair is low effort`() {
+        val e = CouplingKind.of("domain/PaymentRepository.kt", "data/DefaultPaymentRepository.kt", FileCategory.SOURCE, namesRelated = true)
+        assertEquals("companion", e.kind)
+        assertEquals("low", e.effort)
+    }
+
+    @Test
+    fun `unrelated same-language coupling is medium effort`() {
+        val e = CouplingKind.of("app/CheckoutScreen.kt", "core/PricingRules.kt", FileCategory.SOURCE, namesRelated = false)
+        assertEquals("same-language", e.kind)
+        assertEquals("medium", e.effort)
+    }
+
+    @Test
+    fun `generated coupling needs no fixing`() {
+        val e = CouplingKind.of("app/Foo.kt", "gen/Foo.mockolo.kt", FileCategory.GENERATED, namesRelated = true)
+        assertEquals("generated", e.kind)
+        assertEquals("none", e.effort)
+    }
+
+    @Test
+    fun `an unrecognized language is not understated as companion or same-language`() {
+        // .php is unmapped; the pair still crosses a language boundary and must not
+        // be labelled low-effort companion just because the names match.
+        val e = CouplingKind.of("web/Foo.kt", "legacy/Foo.php", FileCategory.SOURCE, namesRelated = true)
+        assertEquals("cross-language", e.kind)
+        assertEquals("high", e.effort)
+    }
+
+    @Test
+    fun `boundary mismatch finding carries the effort estimate end to end`() {
+        var t = 0L
+        fun commit(vararg files: String): Commit { t += 3600 * 24; return Commit("h$t", "alice", t, "m", files.toList()) }
+        // Kotlin↔Swift across modules: the detector must wire the estimate through.
+        val head = setOf("android/Screen.kt", "ios/Screen.swift")
+        val changes = List(8) { LogicalChange(listOf(commit("android/Screen.kt", "ios/Screen.swift"))) }
+        val finding = Analyzer(minSupport = 5, minConfidence = 0.6)
+            .analyze(changes, Boundaries(head), head)
+            .single { it.type == "boundary_mismatch" }
+        assertEquals("high", finding.effort)
+        assertEquals("cross-language", finding.detail.metrics["couplingKind"])
+        assertEquals("high", finding.detail.metrics["effort"])
+        assertTrue(finding.detail.interpretations.any { it.startsWith("Effort (cross-language):") })
+    }
+}
+
 class ClustersTest {
     private var t = 0L
     private fun change(vararg files: String): LogicalChange {

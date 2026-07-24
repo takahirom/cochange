@@ -347,7 +347,7 @@ private fun printFindingsSummary(result: AnalysisResult, echo: (String) -> Unit)
     echo("Architecture Findings (${result.findings.size})")
     for (f in result.findings) {
         echo("")
-        echo("${f.id} [${f.type}/${f.category}] impact=${f.impact} confidence=${f.confidence}")
+        echo("${f.id} [${f.type}/${f.category}] impact=${f.impact}${if (f.effort.isNotEmpty()) " effort=${f.effort}" else ""} confidence=${f.confidence}")
         echo("  ${f.summary}")
         echo("  ${f.detail.observation}")
     }

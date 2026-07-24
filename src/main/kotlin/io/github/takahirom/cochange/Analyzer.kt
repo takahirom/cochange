@@ -27,6 +27,62 @@ internal fun pct(v: Double) = "${(v * 100).toInt()}%"
 internal fun round2(v: Double) = kotlin.math.round(v * 100) / 100
 
 /**
+ * Rough cost-to-fix of a co-change coupling, so findings can be read for ROI
+ * (impact vs effort), not just for impact. The kind is derived from the two
+ * files' categories, languages, and names — cheap signals, no extra git reads.
+ */
+object CouplingKind {
+    data class Estimate(val kind: String, val effort: String, val note: String)
+
+    /**
+     * A comparison key for a file's language. Known extensions map to a language
+     * family; unknown ones fall back to the raw extension so an unrecognized
+     * language is never silently treated as "same" as a different one.
+     */
+    private fun langKey(path: String): String {
+        val ext = path.substringAfterLast('.', "").lowercase()
+        return when (ext) {
+            "kt", "kts", "java" -> "jvm"
+            "swift" -> "swift"
+            "m", "mm" -> "objc"
+            "ts", "tsx", "js", "jsx" -> "js"
+            "py", "pyi" -> "py"
+            "go" -> "go"
+            "rs" -> "rust"
+            "dart" -> "dart"
+            "rb" -> "ruby"
+            "cpp", "cc", "cxx", "hpp", "hxx" -> "cpp"
+            else -> ext.ifEmpty { "?" }
+        }
+    }
+
+    fun of(a: String, b: String, category: String, namesRelated: Boolean): Estimate {
+        val ka = langKey(a)
+        val kb = langKey(b)
+        return when {
+            category == FileCategory.GENERATED -> Estimate(
+                "generated", "none",
+                "one side is generated — the coupling is inherent; fixing the source regenerates it, so this is not a refactoring target.",
+            )
+            // Different language keys → cross-language. Checked before companion:
+            // two platform-parallel files often share a name (Screen.kt / Screen.swift),
+            // but that is the expensive cross-platform coupling, not a cheap companion.
+            // Unknown extensions compare by their raw extension, so an unrecognized
+            // language pair (e.g. Foo.kt / Foo.php) is not understated as low effort.
+            ka != kb -> Estimate(
+                "cross-language", "high",
+                "the two files are in different languages ($ka vs $kb) — a design coupling across a platform boundary is expensive to break; weigh it against the impact before committing.",
+            )
+            namesRelated -> Estimate(
+                "companion", "low",
+                "the names look like an interface/implementation or companion pair — mechanical to move together, but also low architectural surprise.",
+            )
+            else -> Estimate("same-language", "medium", "same-language coupling within the codebase — a normal refactoring target.")
+        }
+    }
+}
+
+/**
  * Finds file pairs in different modules that keep changing together: the
  * module boundary and the actual change boundary disagree.
  */
@@ -93,6 +149,8 @@ class BoundaryMismatchDetector(
             if (p.a.substringAfterLast('/') == p.b.substringAfterLast('/')) path
             else path.substringAfterLast('/')
 
+        val category = context.categoryOfPair(p.a, p.b)
+        val coupling = CouplingKind.of(p.a, p.b, category, namesRelated(p.a, p.b))
         val reverse = p.reverse
         val counterSignals = buildList {
             if (reverse < 0.3) add(
@@ -108,11 +166,12 @@ class BoundaryMismatchDetector(
         return Finding(
             id = "",
             type = type,
-            category = context.categoryOfPair(p.a, p.b),
+            category = category,
             summary = "${name(p.a)} (${boundaries.moduleOf(p.a)}) and ${name(p.b)} (${boundaries.moduleOf(p.b)}) " +
                 "evolve as one change unit across a module boundary",
             confidence = round2(confidence),
             impact = if (confidence >= 0.8 && reverse >= 0.3 && p.together >= 10 && !namesRelated(p.a, p.b)) "high" else "medium",
+            effort = coupling.effort,
             detail = FindingDetail(
                 observation = "${p.together} of $rarerCount changes to ${name(rarer)} also changed ${name(other)} " +
                     "(${pct(confidence)}), despite living in different modules " +
@@ -121,6 +180,7 @@ class BoundaryMismatchDetector(
                     "The module boundary may not match the actual change boundary.",
                     "An abstraction in one module may be leaking implementation details into the other.",
                     "Consider moving the pair into one module, or introducing an interface that absorbs the shared reason to change.",
+                    "Effort (${coupling.kind}): ${coupling.note}",
                 ),
                 counterSignals = counterSignals,
                 supportingChanges = context.sampleChanges(setOf(p.a, p.b)),
@@ -130,6 +190,8 @@ class BoundaryMismatchDetector(
                     "changes(${p.b})" to p.countB.toString(),
                     "P(${name(other)}|${name(rarer)})" to round2(confidence).toString(),
                     "P(${name(rarer)}|${name(other)})" to round2(reverse).toString(),
+                    "couplingKind" to coupling.kind,
+                    "effort" to coupling.effort,
                 ),
             ),
         )
