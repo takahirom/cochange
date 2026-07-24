@@ -41,31 +41,35 @@ History-reading options (`--since`, `--branch`, `--change-unit`, …) apply **pe
 
 ## Example output
 
-Real output from [DroidKaigi conference-app-2025](https://github.com/DroidKaigi/conference-app-2025):
+Real output from [DroidKaigi conference-app-2025](https://github.com/DroidKaigi/conference-app-2025) — three finding types in one run, evidence inline (middle findings elided):
 
 ```text
 $ cochange analyze conference-app-2025
 change unit: merge (auto: merge-based history (94% of mainline commits are merges,
   ~4.8 commits per merge))
 
-Analyzed 381 commits as 381 change units (unit: merge) in 0.5s
+Analyzed 381 commits as 381 change units (unit: merge) in 0.6s
 
+# a boundary the code ignores — and how costly it is to fix (effort)
 finding-1 [boundary_mismatch/source] impact=medium effort=medium confidence=1.0
   App.kt (app-android) and AndroidAppGraph.kt (app-shared) evolve as one
   change unit across a module boundary
   5 of 5 changes to AndroidAppGraph.kt also changed App.kt (100%),
   despite living in different modules (app-android vs app-shared).
 
-finding-6 [unstable_hub/source] impact=high
-  KaigiAppUi.androidJvm.kt participated in 8% of multi-file changes,
-  spanning 21 other modules
+  ... 5 more boundary mismatches ...
 
-finding-7 [split_candidate/source] impact=medium
+# one file everything drags in
+finding-7 [unstable_hub/source] impact=high confidence=0.4
+  KaigiAppUi.androidJvm.kt participated in 8% of multi-file changes,
+  spanning 20 other modules
+
+# one file doing two unrelated jobs — with the split lines
+finding-8 [split_candidate/source] impact=medium confidence=0.56
   KaigiAppUi.ios.kt belongs to 2 independent change clusters
-  ...strongly co-changes with 5 files that fall into 2 groups with no
-  co-change between them: group 1 (3 files): AboutTabRoute.kt,
-  AboutNavGraph.kt, AboutNavExtension.kt; group 2 (2 files):
-  libs.versions.toml, KaigiAppUi.androidJvm.kt.
+  ...co-changes with 5 files in 2 groups with no co-change between them:
+  group 1 (3 files): AboutTabRoute.kt, AboutNavGraph.kt, AboutNavExtension.kt;
+  group 2 (2 files): libs.versions.toml, KaigiAppUi.androidJvm.kt.
 ```
 
 `clusters` groups strongly co-changing files into the codebase's de-facto change units. It prints one headline per cluster; the full file list is one `--show` away, so a big monolith stays readable:
