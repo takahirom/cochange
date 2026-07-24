@@ -25,6 +25,8 @@ cochange metrics /path/to/repo --json                  # repo-level scores (high
 cochange guide                                         # playbooks: which commands, in what order, and how to read the results
 ```
 
+History-reading options (`--since`, `--branch`, `--change-unit`, …) apply **per command** — each one re-reads the Git log — so pass the same `--since` to every command to compare like with like. With no `--since` the whole history is used, and the run says so in its banner.
+
 **AI agents:** start with `cochange guide` — the playbooks (`explore`, `align-boundaries`, `reduce-change-tax`, `split-god-class`, `extract-module`, plus `reading` for how to weigh a finding) are written so an agent can operate the tool end to end without reading this README.
 
 The only required input is a Git repository — zero config, language-agnostic, fully local.
@@ -64,17 +66,25 @@ finding-7 [split_candidate/source] impact=medium
   libs.versions.toml, KaigiAppUi.androidJvm.kt.
 ```
 
-`clusters` groups strongly co-changing files into the codebase's de-facto change units:
+`clusters` groups strongly co-changing files into the codebase's de-facto change units. It prints one headline per cluster; the full file list is one `--show` away, so a big monolith stays readable:
 
 ```text
 $ cochange clusters conference-app-2025 --min-support 5 --category source
-cluster 1: 8 files, 14 strong pairs (pair-support volume 81)
-  feature/sessions/.../TimetableItemDetailContent.kt (11 changes)
-  feature/sessions/.../TimetableItemDetailScreen.kt (14 changes)
-  ... 4 more detail components ...
-  feature/sessions/.../values-ja/strings.xml (8 changes)
-  feature/sessions/.../values/strings.xml (7 changes)
+cluster 1: 8 files across 1 module (feature/sessions), 14 strong pairs (pair-support volume 81)
+  strongest pair: strings.xml x strings.xml (7 together, jaccard 0.88)
+cluster 2: 4 files across 1 module (app-shared), 6 strong pairs (pair-support volume 36)
+  strongest pair: KaigiAppUi.ios.kt x AboutNavExtension.kt (6 together, jaccard 0.60)
+...
+cluster 4: 4 files across 3 modules, 6 strong pairs (pair-support volume 30)
+  strongest pair: App.kt x AndroidAppGraph.kt (5 together, jaccard 0.83)
 
+Next: cochange clusters conference-app-2025 --show 1 --min-support 5 --min-jaccard 0.25 --category source
+```
+
+Each headline recommends the exact command to expand it. `--show N` opens one cluster — here cluster 4, the Kotlin Multiplatform entry points spread across three modules but always changed in lockstep:
+
+```text
+$ cochange clusters conference-app-2025 --min-support 5 --category source --show 4
 cluster 4: 4 files, 6 strong pairs (pair-support volume 30)
   app-android/.../App.kt (6 changes, app-android)
   app-shared/src/androidMain/.../AndroidAppGraph.kt (5 changes, app-shared)
@@ -83,7 +93,7 @@ cluster 4: 4 files, 6 strong pairs (pair-support volume 30)
   strongest pair: App.kt x AndroidAppGraph.kt (5 together, jaccard 0.83)
 ```
 
-Each cluster is a real change unit the module structure doesn't show: the session-detail screen with its translated strings (cluster 1), and the Kotlin Multiplatform entry points spread across three modules but always changed in lockstep (cluster 4).
+Each cluster is a real change unit the module structure doesn't show: the session-detail screen with its translated strings (cluster 1), and the KMP entry points above (cluster 4).
 
 `inspect` returns JSON with observation / interpretations / counterSignals / supportingChanges (commit hashes), giving an AI a concrete starting point before it reads any code.
 
