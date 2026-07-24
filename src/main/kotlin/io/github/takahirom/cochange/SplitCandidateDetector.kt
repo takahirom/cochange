@@ -50,7 +50,7 @@ class SplitCandidateDetector(
             Finding(
                 id = "",
                 type = type,
-                category = FileCategory.of(file),
+                category = context.categoryOf(file),
                 summary = "$name belongs to ${c.components.size} independent change clusters",
                 confidence = round2(minOf(1.0, c.partnerSupport / 50.0)),
                 impact = if (c.components.size >= 3) "high" else "medium",

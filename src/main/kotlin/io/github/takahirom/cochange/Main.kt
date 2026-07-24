@@ -99,7 +99,7 @@ class Findings : CliktCommand(
 ) {
     private val path by argument(help = "Path to the Git repository").default(".")
     private val type by option("--type", help = "Only findings of this type (e.g. boundary_mismatch, unstable_hub)")
-    private val category by option("--category", help = "Only findings in this category (source, config, build, docs)")
+    private val category by option("--category", help = "Only findings in this category (source, config, build, docs, generated)")
     private val asJson by option("--json").flag()
 
     override fun run() {
@@ -126,7 +126,7 @@ class Pairs : CliktCommand(
     private val minSupport by option("--min-support", help = "Minimum co-change count to list").int().restrictTo(min = 1).default(5)
     private val top by option("--top", help = "Number of pairs to show").int().restrictTo(min = 1).default(50)
     private val file by option("--file", help = "Only pairs involving a path containing this substring")
-    private val category by option("--category", help = "Only pairs in this category (source, config, build, docs)")
+    private val category by option("--category", help = "Only pairs in this category (source, config, build, docs, generated)")
 
     override fun run() {
         val repo = File(path).canonicalFile
@@ -140,7 +140,7 @@ class Pairs : CliktCommand(
         context.pairs(minTogether = minSupport)
             .filter { it.a in headFiles && it.b in headFiles }
             .filter { file == null || it.a.contains(file!!) || it.b.contains(file!!) }
-            .filter { category == null || FileCategory.ofPair(it.a, it.b) == category }
+            .filter { category == null || context.categoryOfPair(it.a, it.b) == category }
             .sortedByDescending { it.together }
             .take(top)
             .forEach { p ->
@@ -163,7 +163,7 @@ class ClustersCommand : CliktCommand(
     private val minSupport by option("--min-support", help = "Minimum co-change count for an edge").int().restrictTo(min = 1).default(10)
     private val minJaccard by option("--min-jaccard", help = "Minimum Jaccard similarity for an edge (together / either)").double().restrictTo(0.0, 1.0).default(0.25)
     private val top by option("--top", help = "Number of clusters to show").int().restrictTo(min = 1).default(10)
-    private val category by option("--category", help = "Only files in this category (source, config, build, docs)")
+    private val category by option("--category", help = "Only files in this category (source, config, build, docs, generated)")
     private val show by option("--show", help = "Expand one cluster (by its number) to its full file list").int().restrictTo(min = 1)
 
     override fun run() {
@@ -172,7 +172,7 @@ class ClustersCommand : CliktCommand(
         val context = setup.context
         val boundaries = context.boundaries
         val clusters = Clusters.build(context, minSupport, minJaccard) {
-            category == null || FileCategory.of(it) == category
+            category == null || context.categoryOf(it) == category
         }
 
         printBanner(setup, { m, e -> echo(m, err = e) }, compact = true)

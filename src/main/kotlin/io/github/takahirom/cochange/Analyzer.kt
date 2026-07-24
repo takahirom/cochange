@@ -51,9 +51,9 @@ class BoundaryMismatchDetector(
             .sortedWith(compareBy<AnalysisContext.PairStat> { namesRelated(it.a, it.b) }
                 .thenByDescending { it.confidence * it.together })
             .toList()
-            // Rank per category so build files and docs, which always co-change,
-            // can't crowd production-code findings out of the list.
-            .groupBy { FileCategory.ofPair(it.a, it.b) }
+            // Rank per category so build files, docs, and generated code, which
+            // always co-change, can't crowd production-code findings out of the list.
+            .groupBy { context.categoryOfPair(it.a, it.b) }
             .flatMap { (category, list) ->
                 list.take(if (category == FileCategory.SOURCE) maxFindings else maxOtherCategoryFindings)
             }
@@ -108,7 +108,7 @@ class BoundaryMismatchDetector(
         return Finding(
             id = "",
             type = type,
-            category = FileCategory.ofPair(p.a, p.b),
+            category = context.categoryOfPair(p.a, p.b),
             summary = "${name(p.a)} (${boundaries.moduleOf(p.a)}) and ${name(p.b)} (${boundaries.moduleOf(p.b)}) " +
                 "evolve as one change unit across a module boundary",
             confidence = round2(confidence),
@@ -178,7 +178,7 @@ class UnstableHubDetector(
                 Finding(
                     id = "",
                     type = type,
-                    category = FileCategory.of(file),
+                    category = context.categoryOf(file),
                     summary = "${file.substringAfterLast('/')} participated in ${pct(rate)} of multi-file changes, " +
                         "spanning $modules other modules",
                     confidence = round2(minOf(1.0, count / 50.0)),

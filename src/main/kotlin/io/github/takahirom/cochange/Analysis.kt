@@ -64,10 +64,11 @@ object Analysis {
         val excludes = DEFAULT_EXCLUDES + options.extraExcludes
         val changes = strategy.changeUnits(repo, options.branch, options.since, excludes)
         val headFiles = GitLog.headFiles(repo, options.branch)
+        val generated = GitLog.generatedFiles(repo, headFiles)
         return AnalysisSetup(
             repo = repo,
             options = options,
-            context = AnalysisContext(changes, Boundaries(headFiles, options.moduleRoots), headFiles),
+            context = AnalysisContext(changes, Boundaries(headFiles, options.moduleRoots), headFiles, generated),
             changeUnitName = strategy.name,
             changeUnitReason = resolved.reason,
             shallow = GitLog.isShallow(repo),
