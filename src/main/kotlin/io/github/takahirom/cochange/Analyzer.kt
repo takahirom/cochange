@@ -51,9 +51,9 @@ class BoundaryMismatchDetector(
             .sortedWith(compareBy<AnalysisContext.PairStat> { namesRelated(it.a, it.b) }
                 .thenByDescending { it.confidence * it.together })
             .toList()
-            // Rank per category so build files and docs, which always co-change,
-            // can't crowd production-code findings out of the list.
-            .groupBy { FileCategory.ofPair(it.a, it.b) }
+            // Rank per category so build files, docs, and generated code, which
+            // always co-change, can't crowd production-code findings out of the list.
+            .groupBy { context.categoryOfPair(it.a, it.b) }
             .flatMap { (category, list) ->
                 list.take(if (category == FileCategory.SOURCE) maxFindings else maxOtherCategoryFindings)
             }
@@ -108,7 +108,7 @@ class BoundaryMismatchDetector(
         return Finding(
             id = "",
             type = type,
-            category = FileCategory.ofPair(p.a, p.b),
+            category = context.categoryOfPair(p.a, p.b),
             summary = "${name(p.a)} (${boundaries.moduleOf(p.a)}) and ${name(p.b)} (${boundaries.moduleOf(p.b)}) " +
                 "evolve as one change unit across a module boundary",
             confidence = round2(confidence),
@@ -144,6 +144,7 @@ class UnstableHubDetector(
     private val minParticipation: Int = 20,
     private val minModuleSpread: Int = 5,
     private val maxFindings: Int = 10,
+    private val maxOtherCategoryFindings: Int = 5,
 ) : FindingDetector {
     override val type = "unstable_hub"
     override val description =
@@ -171,14 +172,20 @@ class UnstableHubDetector(
                     (partnerModules[file]?.size ?: 0) >= minModuleSpread
             }
             .sortedByDescending { (file, count) -> count.toLong() * partnerModules[file]!!.size }
-            .take(maxFindings)
+            .toList()
+            // Cap per category (like boundary_mismatch) so generated/build/docs hubs
+            // can't consume every slot and push source hubs out of the top findings.
+            .groupBy { (file, _) -> context.categoryOf(file) }
+            .flatMap { (category, list) ->
+                list.take(if (category == FileCategory.SOURCE) maxFindings else maxOtherCategoryFindings)
+            }
             .map { (file, count) ->
                 val rate = count.toDouble() / multiFileChanges.size
                 val modules = partnerModules[file]!!.size
                 Finding(
                     id = "",
                     type = type,
-                    category = FileCategory.of(file),
+                    category = context.categoryOf(file),
                     summary = "${file.substringAfterLast('/')} participated in ${pct(rate)} of multi-file changes, " +
                         "spanning $modules other modules",
                     confidence = round2(minOf(1.0, count / 50.0)),

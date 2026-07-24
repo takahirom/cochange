@@ -110,6 +110,55 @@ class FileCategoryTest {
         assertEquals("source", FileCategory.ofPair("src/App.kt", "src/Repo.kt"))
         assertEquals("docs", FileCategory.ofPair("README.md", "app/build.gradle.kts"))
     }
+
+    @Test
+    fun `built-in heuristics classify well-known generated artifacts`() {
+        assertEquals(FileCategory.GENERATED, FileCategory.of("Mocks/zzz.mockolo.swift"))
+        assertEquals(FileCategory.GENERATED, FileCategory.of("Generated/zzz.Sourcery.Foo.out.swift"))
+        assertEquals(FileCategory.GENERATED, FileCategory.of("api/service.pb.go"))
+        assertEquals(FileCategory.GENERATED, FileCategory.of("lib/model.g.dart"))
+    }
+
+    @Test
+    fun `hand-written files that merely mention generated are not swept up`() {
+        assertFalse(FileCategory.looksGenerated("ui/GeneratedContentView.swift"))
+        assertEquals(FileCategory.SOURCE, FileCategory.of("ui/GeneratedContentView.swift"))
+    }
+}
+
+class GeneratedCategoryTest {
+    private var t = 0L
+    private fun commit(vararg files: String): Commit { t += 3600 * 24; return Commit("h$t", "alice", t, "m", files.toList()) }
+
+    @Test
+    fun `gitattributes-declared files override the name-based category`() {
+        val head = setOf("app/Foo.kt", "app/Bar.kt")
+        val context = AnalysisContext(emptyList(), Boundaries(head), head, generated = setOf("app/Foo.kt"))
+        // Declared generated, despite an ordinary .kt name.
+        assertEquals(FileCategory.GENERATED, context.categoryOf("app/Foo.kt"))
+        // A pair inherits the generated (least source-like) side.
+        assertEquals(FileCategory.GENERATED, context.categoryOfPair("app/Foo.kt", "app/Bar.kt"))
+    }
+
+    @Test
+    fun `generated findings rank below source findings`() {
+        val head = setOf(
+            "app/build.gradle.kts", "data/build.gradle.kts", "gen/build.gradle.kts",
+            "app/PaymentScreen.kt", "data/PaymentRepository.kt",
+            "app/CardView.kt", "gen/zzz.mockolo.kt",
+        )
+        val changes = buildList {
+            repeat(8) { add(LogicalChange(listOf(commit("app/PaymentScreen.kt", "data/PaymentRepository.kt")))) }
+            // A generated file coupled to source across a module boundary — the classic noise.
+            repeat(8) { add(LogicalChange(listOf(commit("app/CardView.kt", "gen/zzz.mockolo.kt")))) }
+        }
+        val findings = Analyzer(minSupport = 5, minConfidence = 0.6).analyze(changes, Boundaries(head), head)
+        val sourceIdx = findings.indexOfFirst { it.category == FileCategory.SOURCE }
+        val generatedIdx = findings.indexOfFirst { it.category == FileCategory.GENERATED }
+        assertTrue(sourceIdx >= 0, "expected a source finding")
+        assertTrue(generatedIdx >= 0, "expected a generated finding")
+        assertTrue(sourceIdx < generatedIdx, "source findings must rank before generated ones")
+    }
 }
 
 class NamesRelatedTest {

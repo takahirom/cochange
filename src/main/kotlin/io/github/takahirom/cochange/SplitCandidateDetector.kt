@@ -11,6 +11,7 @@ class SplitCandidateDetector(
     private val minPartnerLink: Int = 3,
     private val minComponentSize: Int = 2,
     private val maxFindings: Int = 10,
+    private val maxOtherCategoryFindings: Int = 5,
 ) : FindingDetector {
     override val type = "split_candidate"
     override val description =
@@ -37,7 +38,12 @@ class SplitCandidateDetector(
             Candidate(file, components, partners.sumOf { links[it] ?: 0 })
         }
             .sortedWith(compareByDescending<Candidate> { it.components.size }.thenByDescending { it.partnerSupport })
-            .take(maxFindings)
+            // Cap per category (like boundary_mismatch) so generated/build/docs files
+            // can't consume every slot and push source split-candidates out.
+            .groupBy { context.categoryOf(it.file) }
+            .flatMap { (category, list) ->
+                list.take(if (category == FileCategory.SOURCE) maxFindings else maxOtherCategoryFindings)
+            }
 
         return candidates.map { c ->
             val file = c.file
@@ -50,7 +56,7 @@ class SplitCandidateDetector(
             Finding(
                 id = "",
                 type = type,
-                category = FileCategory.of(file),
+                category = context.categoryOf(file),
                 summary = "$name belongs to ${c.components.size} independent change clusters",
                 confidence = round2(minOf(1.0, c.partnerSupport / 50.0)),
                 impact = if (c.components.size >= 3) "high" else "medium",

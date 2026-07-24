@@ -24,7 +24,20 @@ class AnalysisContext(
     val changes: List<LogicalChange>,
     val boundaries: Boundaries,
     val headFiles: Set<String>,
+    /** Files declared `linguist-generated` in `.gitattributes`; classified as generated on top of the name heuristics. */
+    val generated: Set<String> = emptySet(),
 ) {
+    /** Category of one file, treating repo-declared generated files as [FileCategory.GENERATED]. */
+    fun categoryOf(path: String): String =
+        if (path in generated) FileCategory.GENERATED else FileCategory.of(path)
+
+    /** Category of a pair: the least source-like side (one generated/build file makes the pair that). */
+    fun categoryOfPair(a: String, b: String): String {
+        val ca = categoryOf(a)
+        val cb = categoryOf(b)
+        return if (FileCategory.priority.indexOf(ca) >= FileCategory.priority.indexOf(cb)) ca else cb
+    }
+
     private val pathToId = HashMap<String, Int>()
     private val idToPath = ArrayList<String>()
     private val fileChangeCountById = HashMap<Int, Int>()

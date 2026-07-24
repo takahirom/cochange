@@ -42,6 +42,35 @@ object GitLog {
             .filter { it.isNotBlank() }
             .toSet()
 
+    /**
+     * Files marked `linguist-generated` in `.gitattributes` (the same signal
+     * GitHub uses to fold generated code out of diffs). Resolved with
+     * `git check-attr` so attribute precedence and negations are honored exactly
+     * instead of re-implemented. Returns empty if the repo declares nothing.
+     */
+    fun generatedFiles(repo: File, rev: String, headFiles: Set<String>): Set<String> {
+        if (headFiles.isEmpty()) return emptySet()
+        val input = headFiles.joinToString("\n")
+        // --source reads .gitattributes from the analyzed revision rather than the
+        // working tree, which may be a different branch or carry local edits. Fall
+        // back to working-tree attributes for git < 2.40, which lacks --source.
+        val output = runCatching {
+            runGit(repo, listOf("check-attr", "--source=$rev", "linguist-generated", "--stdin"), stdin = input)
+        }.recoverCatching {
+            runGit(repo, listOf("check-attr", "linguist-generated", "--stdin"), stdin = input)
+        }.getOrElse { return emptySet() }
+        val marker = ": linguist-generated: "
+        val result = HashSet<String>()
+        for (line in output.lineSequence()) {
+            val i = line.lastIndexOf(marker)
+            if (i < 0) continue
+            when (line.substring(i + marker.length).trim()) {
+                "set", "true" -> result.add(line.substring(0, i))
+            }
+        }
+        return result
+    }
+
     fun isRepository(repo: File): Boolean =
         runCatching { runGit(repo, listOf("rev-parse", "--git-dir")) }.isSuccess
 
@@ -72,17 +101,23 @@ object GitLog {
     fun headCommit(repo: File, branch: String?): String =
         runGit(repo, listOf("rev-parse", (branch ?: "HEAD"))).trim()
 
-    internal fun runGit(repo: File, args: List<String>): String {
+    internal fun runGit(repo: File, args: List<String>, stdin: String? = null): String {
         // quotepath=off keeps non-ASCII paths literal instead of octal-escaped.
         val process = ProcessBuilder(listOf("git", "-c", "core.quotepath=off") + args)
             .directory(repo)
             .redirectErrorStream(false)
             .start()
+        // Feed stdin (e.g. paths for check-attr --stdin) on its own thread so a
+        // large payload can't deadlock against a filling stdout pipe.
+        val stdinWriter = stdin?.let { input ->
+            Thread { process.outputStream.bufferedWriter().use { it.write(input) } }.apply { start() }
+        }
         // Drain stderr concurrently so a chatty child can't block on a full pipe.
         val err = StringBuilder()
         val errReader = Thread { process.errorStream.bufferedReader().forEachLine { err.appendLine(it) } }
         errReader.start()
         val out = process.inputStream.bufferedReader().readText()
+        stdinWriter?.join()
         if (!process.waitFor(600, TimeUnit.SECONDS)) {
             process.destroyForcibly()
             error("git ${args.first()} timed out")
