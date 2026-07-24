@@ -2,7 +2,15 @@
 
 **Code that changes together should live together.**
 
-A CLI that discovers the *actual* change units of a codebase from Git history and presents them as evidence-backed findings for humans and AI. It looks at what actually changes together, not at static dependencies.
+cochange reads your Git history to find code that **changes together but lives apart** — the coupling your module structure hides — and turns it into evidence-backed findings for humans and AI. It looks at what actually changes together, not at static dependencies.
+
+## What you get
+
+- **Where to start refactoring — ranked by ROI, not vibes.** Which files drag the most changes across module boundaries, with the commits that prove it, plus an effort estimate (an entrenched Kotlin↔Swift coupling costs more to fix than a generated-file one) so you sort by impact vs cost (`analyze`, `findings`).
+- **Module boundaries the code is asking for.** Files that always move together — ready-made "extract a module" proposals hiding in a monolith (`clusters`).
+- **Proof a migration finished.** A parallel old/new implementation shows up as one cluster — every fix still paid twice; when the cluster disappears, the migration is actually done.
+- **A structure score you can trend.** The whole history reduced to a few higher-is-better numbers, so you can tell if a refactor helped or just moved things around (`metrics`).
+- **A map for AI agents.** `--json` + `guide` hand a coding agent the change structure of an unfamiliar repo before it reads a line.
 
 ## Install
 
@@ -25,45 +33,43 @@ cochange metrics /path/to/repo --json                  # repo-level scores (high
 cochange guide                                         # playbooks: which commands, in what order, and how to read the results
 ```
 
+The only required input is a Git repository — zero config, language-agnostic, fully local.
+
 History-reading options (`--since`, `--branch`, `--change-unit`, …) apply **per command** — each one re-reads the Git log — so pass the same `--since` to every command to compare like with like. With no `--since` the whole history is used, and the run says so in its banner.
 
 **AI agents:** start with `cochange guide` — the playbooks (`explore`, `align-boundaries`, `reduce-change-tax`, `split-god-class`, `extract-module`, plus `reading` for how to weigh a finding) are written so an agent can operate the tool end to end without reading this README.
 
-The only required input is a Git repository — zero config, language-agnostic, fully local.
-
-## Motivation
-
-"Code that changes together should live together" — plenty of people have said some version of this principle*, and I think they're right. Whether it actually holds in your codebase is already recorded in your Git history, so this tool reads it from there.
-
-\* Constantine's cohesion (1968–), Robert C. Martin's Common Closure Principle (*"gather into components those classes that change for the same reasons and at the same times"*), Kent Beck's [*"put everything that changes at the same time in one place"*](https://newsletter.kentbeck.com/p/cohesion), and the change-coupling research line from Gall et al. (ICSM 1998) through Tornhill's *Your Code as a Crime Scene*.
-
 ## Example output
 
-Real output from [DroidKaigi conference-app-2025](https://github.com/DroidKaigi/conference-app-2025):
+Real output from [DroidKaigi conference-app-2025](https://github.com/DroidKaigi/conference-app-2025) — three finding types in one run, evidence inline (middle findings elided):
 
 ```text
 $ cochange analyze conference-app-2025
 change unit: merge (auto: merge-based history (94% of mainline commits are merges,
   ~4.8 commits per merge))
 
-Analyzed 381 commits as 381 change units (unit: merge) in 0.5s
+Analyzed 381 commits as 381 change units (unit: merge) in 0.6s
 
+# a boundary the code ignores — and how costly it is to fix (effort)
 finding-1 [boundary_mismatch/source] impact=medium effort=medium confidence=1.0
   App.kt (app-android) and AndroidAppGraph.kt (app-shared) evolve as one
   change unit across a module boundary
   5 of 5 changes to AndroidAppGraph.kt also changed App.kt (100%),
   despite living in different modules (app-android vs app-shared).
 
-finding-6 [unstable_hub/source] impact=high
-  KaigiAppUi.androidJvm.kt participated in 8% of multi-file changes,
-  spanning 21 other modules
+  ... 5 more boundary mismatches ...
 
-finding-7 [split_candidate/source] impact=medium
+# one file everything drags in
+finding-7 [unstable_hub/source] impact=high confidence=0.4
+  KaigiAppUi.androidJvm.kt participated in 8% of multi-file changes,
+  spanning 20 other modules
+
+# one file doing two unrelated jobs — with the split lines
+finding-8 [split_candidate/source] impact=medium confidence=0.56
   KaigiAppUi.ios.kt belongs to 2 independent change clusters
-  ...strongly co-changes with 5 files that fall into 2 groups with no
-  co-change between them: group 1 (3 files): AboutTabRoute.kt,
-  AboutNavGraph.kt, AboutNavExtension.kt; group 2 (2 files):
-  libs.versions.toml, KaigiAppUi.androidJvm.kt.
+  ...co-changes with 5 files in 2 groups with no co-change between them:
+  group 1 (3 files): AboutTabRoute.kt, AboutNavGraph.kt, AboutNavExtension.kt;
+  group 2 (2 files): libs.versions.toml, KaigiAppUi.androidJvm.kt.
 ```
 
 `clusters` groups strongly co-changing files into the codebase's de-facto change units. It prints one headline per cluster; the full file list is one `--show` away, so a big monolith stays readable:
@@ -118,24 +124,28 @@ reading: 13.1 effective modules x 29% adjusted locality — rich structure, freq
 
 `adjusted for chance` is the key number: reading it together with `effective modules` separates "few modules, easy to comply with" from "many modules, actually respected", so the score can't be gamed by a coarser partition.
 
-## What to use it for
-
-- **Module extraction candidates** — `clusters` shows the de-facto change units inside a monolith. A self-contained cluster (screen + logic + models + tests that always move together) is a ready-made module boundary proposal.
-- **Consolidation candidates** — `boundary_mismatch` findings show code that the module structure separates but every change treats as one thing: candidates for moving into one module, or for an interface that absorbs the shared reason to change.
-- **Refactoring priority by change tax** — `unstable_hub` findings quantify which files sit inside the largest share of everyone's changes. A hub participating in 7% of all PRs is a measurable, recurring cost — worth restructuring before code that merely looks ugly.
-- **Migration tracking** — parallel old/new implementations showing up as one cluster means every fix is still being paid twice; the cluster disappearing is evidence the migration actually finished.
-- **Tracking refactors over time** — `metrics` condenses the whole analysis into three higher-is-better scores (module locality, hub-free change rate, boundary integrity) with applicability guardrails; run it on a schedule with the same options and `--json` to see whether refactors actually moved the change structure.
-- **AI-assisted architecture work** — `findings --json` and `inspect` give a coding agent the change structure of an unfamiliar codebase before it reads a single file: where to look, what to suspect, and which commits prove it.
-
 ## How it works
 
-1. **Reconstructing change units** (`--change-unit auto|merge|author-window|commit`) — Renames are normalized to the newest path, and bulk changes (formatters, mass renames) are dropped by file-count caps. `merge` walks the first-parent chain so each merge commit carries its whole side branch's diff — one PR becomes one change unit, with no GitHub API needed. `author-window` groups consecutive commits by the same author within 30 minutes (fixups, review-comment chains) for squash-merge histories. `auto` (default) picks `merge` when a meaningful share of mainline commits are merges — unless each merge drags in so many commits that the branch looks like a git-flow release-only mainline, in which case it falls back to `author-window` and suggests pointing `--branch` at the development branch. Every run starts by printing the resolved configuration (branch, chosen change unit and why, thresholds), so the analysis is never a black box.
+1. **Reconstructing change units** (`--change-unit`) — the goal is one PR = one change unit. Renames are normalized to the newest path, and bulk commits (formatters, mass renames) are dropped by file-count caps.
+   - `merge` — walks the first-parent chain so each merge commit carries its whole side branch's diff (one PR per unit, no GitHub API needed).
+   - `author-window` — groups consecutive same-author commits within 30 minutes (fixups, review-comment chains) for squash-merge histories.
+   - `commit` — one commit as one unit, no grouping.
+   - `auto` (default) — picks `merge` when mainline is merge-heavy; falls back to `author-window` when merges each drag in so many commits that the branch looks like a git-flow release-only mainline (and suggests pointing `--branch` at the dev branch).
+
+   Every run prints the resolved configuration (branch, chosen change unit and why, thresholds), so the analysis is never a black box.
 2. **Boundary detection** — Scans the file list at HEAD for common build files (Gradle, npm, Cargo, Go, Maven, Bazel, Python, CMake, Mix) and SwiftPM target directories, and assigns each file to its nearest module root; falls back to the top-level directory. The built-in list is deliberately thin: for anything else (Xcode targets, custom monorepo layouts), declare roots with repeatable `--module-root 'ios/Targets/*'` globs — an AI agent can derive these from the directory layout.
-3. **Finding detection** — each finding type is a pluggable `FindingDetector` over shared pair statistics (`AnalysisContext`). A detector declares its `type` and a one-line `description` of what it finds; `cochange detectors` lists them, so humans and AI can see what the tool is able to discover. New types (e.g. split candidates) plug in without touching the pipeline.
+3. **Finding detection** — each finding type is a pluggable `FindingDetector` over shared pair statistics (`AnalysisContext`). A detector declares its `type` and a one-line `description` of what it finds; `cochange detectors` lists them, so humans and AI can see what the tool is able to discover. New types plug in without touching the pipeline.
    - `boundary_mismatch`: file pairs across module boundaries with co-change count ≥ `--min-support` (5) and conditional probability ≥ `--min-confidence` (0.6). The denominator is the less frequently changed file, i.e. the stronger direction P(other | rarer). One-directional coupling is called out as a counter-signal. Companion pairs whose names predict the coupling (Foo / DefaultFoo / FakeFoo) are ranked below pairs with unrelated names — a screen and a pricing rule co-changing is architecturally surprising; an interface and its implementation is not. Each finding also carries an `effort` estimate (`couplingKind`: generated → none, same-language interface/impl → low, unrelated same-language → medium, cross-language e.g. Kotlin↔Swift → high) so findings can be read for ROI — impact vs cost — not impact alone. A `medium` impact that is `high` effort (an entrenched cross-platform coupling) sorts differently in practice than a `medium` that is `low` effort.
    - `unstable_hub`: files participating in 20+ multi-file changes spanning 5+ other modules, ranked by participation count × module spread.
+   - `split_candidate`: a file whose strong co-change partners fall into multiple independent groups once the file itself is removed — a god-file signature; the partner groups suggest where to split it.
 4. **Category ranking** — Each finding is classified as `source` / `config` / `build` / `docs` / `generated`. Build files, docs, and generated code co-change with everything by design (a generated file always moves with its source of truth), so they are ranked in their own buckets (top 5 each) instead of crowding production-code findings out of the list. Generated files are detected from `.gitattributes` (`linguist-generated`, resolved via `git check-attr` so repo-declared patterns win) plus a conservative built-in list of well-known artifacts (Mockolo, Sourcery, protobuf, `*.g.dart`, `*.min.js`, …). Filter with `findings --category source` (or `--category generated` to audit the noise) or `--type unstable_hub`.
 5. Findings about files no longer present at HEAD are dropped. Results are cached under `~/.cache/cochange/`, so `findings` / `inspect` work without re-analyzing.
+
+## Motivation
+
+Whether "code that changes together should live together"\* actually holds in your codebase is already recorded in your Git history — cochange reads it from there instead of asking you to trust an architecture diagram.
+
+\* Constantine's cohesion (1968–), Robert C. Martin's Common Closure Principle (*"gather into components those classes that change for the same reasons and at the same times"*), Kent Beck's [*"put everything that changes at the same time in one place"*](https://newsletter.kentbeck.com/p/cohesion), and the change-coupling research line from Gall et al. (ICSM 1998) through Tornhill's *Your Code as a Crime Scene*.
 
 ## Language-agnostic by design
 
@@ -144,7 +154,7 @@ The analysis core (log parsing, rename tracking, change grouping, pair statistic
 ## Current limitations
 
 - **Change units are exact only for merge-based histories.** In `merge` mode a change unit is precisely one PR. In `author-window` mode (squash-merge histories) units are an approximation: a PR developed over several days splits into multiple units, and unrelated same-author commits in quick succession merge into one. PR metadata from a forge API would remove that approximation and is planned only as optional enrichment.
-- Finding types are `boundary_mismatch` and `unstable_hub`; `clusters` and `pairs` expose the raw structure for everything else. Split candidates (one file belonging to multiple independent change clusters) and "co-located but diverging" detection are not detectors yet.
+- Finding types are `boundary_mismatch`, `unstable_hub`, and `split_candidate`; `clusters` and `pairs` expose the raw structure for everything else. "Co-located but diverging" detection (files in one module that have stopped changing together) is not a detector yet.
 - No enrichment from PR / issue metadata (the commit heuristics stand in for it).
 - Output is CLI text / JSON only. MCP server, SARIF, and GitHub Actions annotations are not implemented.
 - Thresholds are fixed defaults (tunable via options). Automatic calibration via statistical significance (e.g. lift) is future work.
