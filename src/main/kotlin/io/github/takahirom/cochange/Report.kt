@@ -26,6 +26,8 @@ data class RunContext(
     val logicalChanges: Int,
     val moduleDetection: ModuleDetectionReport,
     val hiddenByRole: Map<String, Int> = emptyMap(),
+    /** Read this before the numbers: a `warning` here means they are not quotable yet. */
+    val warnings: List<AnalysisWarning> = emptyList(),
     val tiers: Map<String, String> = TIER_MEANINGS,
 ) {
     companion object {
@@ -46,6 +48,7 @@ data class RunContext(
             logicalChanges = setup.changes.size,
             moduleDetection = ModuleGate.report(setup.context.moduleDetection),
             hiddenByRole = setup.context.hiddenByRole,
+            warnings = setup.warnings,
         )
     }
 }

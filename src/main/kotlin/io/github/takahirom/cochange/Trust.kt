@@ -120,6 +120,30 @@ object ModuleGate {
     }
 }
 
+/**
+ * A condition that makes the run's numbers less trustworthy. Carried in every
+ * output, including `--json`: a machine consumer has no banner to read, and
+ * "found nothing" and "was given a window over nothing" must not look alike.
+ */
+@Serializable
+data class AnalysisWarning(
+    /** Stable identifier to branch on; the prose in [message] may be reworded. */
+    val code: String,
+    /** warning | note — a warning means do not quote these numbers until it is resolved. */
+    val severity: String,
+    val message: String,
+) {
+    companion object {
+        const val WINDOW_IS_NOW = "window_is_now"
+        const val NO_WINDOW = "no_window"
+        const val SHALLOW_CLONE = "shallow_clone"
+        const val MODULE_DETECTION = "module_detection"
+
+        const val WARNING = "warning"
+        const val NOTE = "note"
+    }
+}
+
 /** A detector that did not run, and why — so a missing finding type is never read as "nothing found". */
 @Serializable
 data class SkippedDetector(

@@ -95,6 +95,7 @@ class Analyze : CliktCommand(
             moduleDetection = run.moduleDetection,
             skippedDetectors = run.skipped,
             hiddenByRole = run.hiddenByRole,
+            warnings = setup.warnings,
         )
         Store.save(repo, result, save)
 
@@ -578,27 +579,20 @@ private fun printBanner(setup: AnalysisSetup, echo: (String, Boolean) -> Unit, c
     // Compact commands (clusters/metrics/pairs) also recompute from the git log, so the
     // window must stay visible here too or an unset --since silently means all history.
     out("branch: ${setup.options.branch ?: "HEAD"}  since: ${since ?: "(all history)"}")
-    if (since == null) {
-        err("note: no --since — computing over all history; pass --since (e.g. '1 year ago') to match the window used elsewhere.")
-    } else {
-        val pinned = setup.resolvedOptions.since
-        if (pinned != null && Analysis.windowLooksUnparsed(pinned)) {
-            err("WARNING: git could not read --since '$since' as a date and treated it as 'now', so almost no history was analyzed. Use a form git understands, e.g. '1 year ago' or '2025-01-01'.")
-        } else if (pinned != null && pinned != since) {
-            out("  window pinned to: $pinned")
-        }
+    val pinned = setup.resolvedOptions.since
+    if (pinned != null && pinned != since && setup.warnings.none { it.code == AnalysisWarning.WINDOW_IS_NOW }) {
+        out("  window pinned to: $pinned")
     }
-    if (setup.shallow) err("WARNING: shallow clone — history is truncated, so every ratio below is biased. Run 'git fetch --unshallow' for accurate results.")
     out("change unit: ${setup.changeUnitName} (${setup.changeUnitReason})" +
         if (compact) "; ${setup.changes.size} change units" else "")
     if (!compact && setup.changeUnitName == "author-window") {
         out("  window: ${setup.options.groupWindowMin}m same-author, max ${setup.options.maxFilesPerCommit} files/commit")
     }
-    // pairs/clusters/metrics print module names too, and a fallback name looks
-    // exactly like a real module root — say so once, up front.
-    val modules = ModuleGate.report(setup.context.moduleDetection)
-    if (modules.trust != ModuleGate.DECLARED) {
-        err("note: module detection is ${modules.trust} (${pct(modules.coverage)} of files under a declared module root) — ${modules.note}")
+    // One source for the caveats, so the banner and the JSON can never disagree
+    // about whether these numbers are quotable.
+    for (warning in setup.warnings) {
+        val label = if (warning.severity == AnalysisWarning.WARNING) "WARNING" else "note"
+        err("$label: ${warning.message}")
     }
 }
 

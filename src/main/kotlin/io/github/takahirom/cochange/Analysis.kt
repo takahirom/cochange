@@ -35,6 +35,8 @@ class AnalysisSetup(
     val changeUnitReason: String,
     val shallow: Boolean,
     val headCommit: String,
+    /** When the window was resolved — the reference point for [Analysis.windowLooksUnparsed]. */
+    val resolvedAt: java.time.Instant = java.time.Instant.now(),
 ) {
     val changes: List<LogicalChange> get() = context.changes
 
@@ -52,6 +54,43 @@ class AnalysisSetup(
             changeUnit = changeUnitName,
         )
     }
+
+    /**
+     * Everything that makes the numbers below less trustworthy, as data rather than
+     * as a banner line. These used to be printed only, and `--json` suppresses the
+     * banner — so `analyze --since "las year" --json` looked like a valid analysis
+     * that simply found nothing, which is the worst possible thing to hand an agent.
+     */
+    val warnings: List<AnalysisWarning> by lazy {
+        buildList {
+            val since = options.since
+            if (since == null) {
+                add(AnalysisWarning(
+                    AnalysisWarning.NO_WINDOW, "note",
+                    "No --since: computing over all history. Pass --since (e.g. '1 year ago') to match the window used elsewhere.",
+                ))
+            } else {
+                val pinned = resolvedOptions.since
+                if (pinned != null && Analysis.windowLooksUnparsed(pinned, resolvedAt)) {
+                    add(AnalysisWarning(
+                        AnalysisWarning.WINDOW_IS_NOW, "warning",
+                        "--since '$since' resolved to the current instant, so almost no history was analyzed. " +
+                            "git accepts any string here and falls back to 'now' when it cannot read it — use a form " +
+                            "it understands, e.g. '1 year ago' or '2025-01-01'.",
+                    ))
+                }
+            }
+            if (shallow) add(AnalysisWarning(
+                AnalysisWarning.SHALLOW_CLONE, "warning",
+                "Shallow clone: history is truncated, so every ratio is biased. Run 'git fetch --unshallow'.",
+            ))
+            val modules = ModuleGate.report(context.moduleDetection)
+            if (modules.trust != ModuleGate.DECLARED) add(AnalysisWarning(
+                AnalysisWarning.MODULE_DETECTION, "note",
+                "Module detection is ${modules.trust} (${pct(modules.coverage)} of files under a declared module root) — ${modules.note}",
+            ))
+        }
+    }
 }
 
 /**
@@ -68,14 +107,21 @@ object Analysis {
     )
 
     /**
-     * True when a resolved `--since` sits within a minute of now. git does not
-     * reject an unparseable date — it falls back to the current time — so
-     * `--since "las year"` quietly analyzes an empty history. Comparing the
-     * pinned instant against now is the only way to notice.
+     * True when a resolved `--since` landed on the instant it was resolved at — the
+     * window selects (almost) nothing.
+     *
+     * git does not reject an unparseable date: it falls back to the current time, so
+     * `--since "las year"` quietly analyzes an empty history. Comparing the pinned
+     * instant against the moment of resolution is the only way to notice. [resolvedAt]
+     * must be that moment, not "now" at call time, or a slow setup makes a genuinely
+     * malformed date look fine. This deliberately also fires for a literal
+     * `--since now`, which is likewise a window over nothing — the reported message
+     * says "resolved to now", not "git could not read it", because both are true of
+     * the outcome and only one is true of the cause.
      */
-    fun windowLooksUnparsed(resolvedSince: String): Boolean {
+    fun windowLooksUnparsed(resolvedSince: String, resolvedAt: java.time.Instant): Boolean {
         val instant = runCatching { java.time.Instant.parse(resolvedSince) }.getOrNull() ?: return false
-        return instant.isAfter(java.time.Instant.now().minusSeconds(60))
+        return !instant.isBefore(resolvedAt.minusSeconds(2))
     }
 
     fun contextFor(repo: File, options: AnalysisOptions): AnalysisSetup {

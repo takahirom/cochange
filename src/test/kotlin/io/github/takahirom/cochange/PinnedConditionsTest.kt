@@ -1,5 +1,6 @@
 package io.github.takahirom.cochange
 
+import com.github.ajalt.clikt.testing.test
 import java.io.File
 import kotlin.test.AfterTest
 import kotlin.test.Test
@@ -42,10 +43,45 @@ class PinnedConditionsTest {
         initRepo()
         // git does not reject a bad date: it falls back to "now", so `--since "las year"`
         // quietly analyzes nothing. Pinning makes that visible instead of invisible.
+        val now = java.time.Instant.now()
         val resolved = GitLog.resolveSince(repo, "las year")
         assertNotNull(resolved)
-        assertTrue(Analysis.windowLooksUnparsed(resolved), "a window resolving to ~now means git didn't understand it")
-        assertTrue(!Analysis.windowLooksUnparsed(GitLog.resolveSince(repo, "1 year ago")!!))
+        assertTrue(Analysis.windowLooksUnparsed(resolved, now), "a window resolving to now means git didn't understand it")
+        assertTrue(!Analysis.windowLooksUnparsed(GitLog.resolveSince(repo, "1 year ago")!!, now))
+        // The reference instant is the moment of resolution, not "now" at check time:
+        // a setup that took minutes must not make a malformed date look valid.
+        assertTrue(
+            Analysis.windowLooksUnparsed(resolved, now.plus(java.time.Duration.ofMinutes(10))).not(),
+            "a later reference is a different question; callers must pass the resolution instant",
+        )
+    }
+
+    /**
+     * The banner is suppressed under `--json`, so a broken window used to produce a
+     * clean-looking empty analysis. An agent reads "no findings", not "invalid input".
+     */
+    @Test
+    fun `a window over nothing is a warning in the JSON, not just in the banner`() {
+        initRepo()
+        val result = Analyze().test(listOf(repo.path, "--since", "las year", "--json"))
+        assertEquals(0, result.statusCode, result.output)
+        val parsed = json.decodeFromString(AnalysisResult.serializer(), result.stdout)
+        val warning = parsed.warnings.singleOrNull { it.code == AnalysisWarning.WINDOW_IS_NOW }
+        assertNotNull(warning, "warnings were ${parsed.warnings.map { it.code }}")
+        assertEquals(AnalysisWarning.WARNING, warning.severity)
+        assertTrue(parsed.findings.isEmpty(), "sanity: this window really does select nothing")
+    }
+
+    @Test
+    fun `a valid window carries no window warning`() {
+        initRepo()
+        val result = Analyze().test(listOf(repo.path, "--since", "1 year ago", "--json"))
+        assertEquals(0, result.statusCode, result.output)
+        val parsed = json.decodeFromString(AnalysisResult.serializer(), result.stdout)
+        assertTrue(
+            parsed.warnings.none { it.code == AnalysisWarning.WINDOW_IS_NOW },
+            "warnings were ${parsed.warnings.map { it.code }}",
+        )
     }
 
     @Test
@@ -73,4 +109,9 @@ class PinnedConditionsTest {
         assertEquals(first.headCommit, replay.headCommit)
         assertTrue("later.kt" !in replay.context.headFiles, "the pinned commit predates later.kt")
     }
+
+    private companion object {
+        val json = kotlinx.serialization.json.Json { ignoreUnknownKeys = true }
+    }
+
 }

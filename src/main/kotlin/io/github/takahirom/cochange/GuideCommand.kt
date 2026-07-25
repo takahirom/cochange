@@ -226,8 +226,12 @@ private val GUIDE_TOPICS: Map<String, String> = linkedMapOf(
              holds one way is a different (weaker) claim.
           5. Category. build/config/docs co-change with everything by design;
              they are ranked separately for a reason.
-          6. Staleness. A WARNING about a moved HEAD or shallow clone means
-             re-run analyze before quoting numbers.
+          6. warnings. Every JSON output carries them (code + severity +
+             message). severity=warning means STOP: the numbers rest on a
+             truncated or empty history. window_is_now means the --since
+             string was not a date git understood, so "no findings" says
+             nothing about the repository. shallow_clone means unshallow first.
+             Do not read an empty findings list before reading this.
         confidence is each type's own ratio and is not comparable across
         types — see the field docs, or use evidence.* instead.
         Co-change measures "changed at the same times" only. Whether the files

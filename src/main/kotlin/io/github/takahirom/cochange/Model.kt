@@ -249,6 +249,13 @@ data class AnalysisResult(
      * view filter, not a smaller dataset.
      */
     val hiddenByRole: Map<String, Int> = emptyMap(),
+    /**
+     * Conditions that make these numbers less trustworthy — an unparseable window, a
+     * shallow clone, guessed module boundaries. Present here and not only in the
+     * banner, because `--json` prints no banner and an empty `findings` list from a
+     * broken window is indistinguishable from a clean repository otherwise.
+     */
+    val warnings: List<AnalysisWarning> = emptyList(),
 )
 
 /**
