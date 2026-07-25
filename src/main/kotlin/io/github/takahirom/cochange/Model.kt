@@ -147,7 +147,13 @@ data class AnalysisResult(
     val analyzedCommits: Int,
     val logicalChanges: Int,
     val findings: List<Finding>,
-    /** The conditions this snapshot was produced under, so later commands can reuse them. Null for pre-0.5 caches. */
+    /** What the user asked for, verbatim — including relative values like `since: "1 year ago"`. */
+    val requestedOptions: AnalysisOptions? = null,
+    /**
+     * The same conditions with everything relative pinned to what it resolved to
+     * (commit, absolute instant, chosen change unit). This is what `--analysis`
+     * replays, so a re-run reads the same history rather than today's equivalent.
+     */
     val options: AnalysisOptions? = null,
     /** Provenance, coverage, and gate decision for module detection — the structure findings are built on. */
     val moduleDetection: ModuleDetectionReport? = null,

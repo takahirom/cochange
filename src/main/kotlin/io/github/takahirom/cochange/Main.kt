@@ -89,7 +89,8 @@ class Analyze : CliktCommand(
             analyzedCommits = changes.sumOf { it.commits.size },
             logicalChanges = changes.size,
             findings = run.findings,
-            options = history.toAnalysisOptions(),
+            requestedOptions = history.toAnalysisOptions(),
+            options = setup.resolvedOptions,
             moduleDetection = run.moduleDetection,
             skippedDetectors = run.skipped,
         )
@@ -453,6 +454,13 @@ private fun printBanner(setup: AnalysisSetup, echo: (String, Boolean) -> Unit, c
     out("branch: ${setup.options.branch ?: "HEAD"}  since: ${since ?: "(all history)"}")
     if (since == null) {
         err("note: no --since — computing over all history; pass --since (e.g. '1 year ago') to match the window used elsewhere.")
+    } else {
+        val pinned = setup.resolvedOptions.since
+        if (pinned != null && Analysis.windowLooksUnparsed(pinned)) {
+            err("WARNING: git could not read --since '$since' as a date and treated it as 'now', so almost no history was analyzed. Use a form git understands, e.g. '1 year ago' or '2025-01-01'.")
+        } else if (pinned != null && pinned != since) {
+            out("  window pinned to: $pinned")
+        }
     }
     if (setup.shallow) err("WARNING: shallow clone — history is truncated, so every ratio below is biased. Run 'git fetch --unshallow' for accurate results.")
     out("change unit: ${setup.changeUnitName} (${setup.changeUnitReason})" +
