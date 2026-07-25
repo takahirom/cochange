@@ -280,3 +280,43 @@ class VariantSetTest {
         assertEquals("companion", estimate.kind)
     }
 }
+
+/**
+ * Effort has to describe the work, not the file extensions. A Gradle build script and
+ * a version catalog are `jvm` vs `toml`, which the cross-language rule read as an
+ * expensive cross-platform design coupling — for two files the build system is designed
+ * to change together.
+ */
+class BuildWiringEffortTest {
+    @Test
+    fun `two build definitions are costed as build wiring, not as a platform boundary`() {
+        val estimate = CouplingKind.of(
+            "app/build.gradle.kts", "gradle/libs.versions.toml",
+            FileCategory.BUILD, namesRelated = false,
+        )
+        assertEquals("build-wiring", estimate.kind)
+        assertEquals("low", estimate.effort)
+    }
+
+    @Test
+    fun `a real cross-language source coupling is still expensive`() {
+        val estimate = CouplingKind.of(
+            "android/Screen.kt", "ios/Screen.swift",
+            FileCategory.SOURCE, namesRelated = true,
+        )
+        assertEquals("cross-language", estimate.kind)
+        assertEquals("high", estimate.effort)
+    }
+
+    @Test
+    fun `a lockstep manifest set outranks the build-wiring reading`() {
+        // crates/*/Cargo.toml is both a build pair and a variant set; the variant set is
+        // the more specific statement, and it costs nothing rather than a little.
+        val estimate = CouplingKind.of(
+            "crates/cli/Cargo.toml", "crates/grep/Cargo.toml",
+            FileCategory.BUILD, namesRelated = true,
+        )
+        assertEquals("variant-set", estimate.kind)
+        assertEquals("none", estimate.effort)
+    }
+}

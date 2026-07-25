@@ -107,22 +107,31 @@ object CouplingKind {
                 "generated", "none",
                 "one side is generated — the coupling is inherent; fixing the source regenerates it, so this is not a refactoring target.",
             )
-            // Different language keys → cross-language. Checked before companion:
-            // two platform-parallel files often share a name (Screen.kt / Screen.swift),
-            // but that is the expensive cross-platform coupling, not a cheap companion.
+            // Identical basename in sibling directories: a variant/lockstep set
+            // (per-crate Cargo.toml bumped by one release, per-locale strings.xml
+            // translated together). Calling that "interface/implementation" was simply
+            // the wrong description of the same low-surprise situation.
+            siblingVariants(a, b) -> Estimate(
+                "variant-set", "none",
+                "the same file name under sibling directories — a variant or lockstep set (coordinated version bumps, translations, per-target manifests). The coupling is the process, not an architectural boundary problem.",
+            )
+            // Both sides are build definitions. Adding a dependency or bumping a version
+            // routinely touches a build script and a version catalog together — that is
+            // how the build system is designed. Checked before the language rule, which
+            // otherwise reads build.gradle.kts vs libs.versions.toml as "jvm vs toml,
+            // a platform boundary that is expensive to break".
+            category == FileCategory.BUILD -> Estimate(
+                "build-wiring", "low",
+                "both files are build definitions — adding a dependency or bumping a version routinely touches several of them at once. Still worth reading as a boundary signal, but cheap to act on and partly inherent to the build system.",
+            )
+            // Different language keys → cross-language. Checked before companion: two
+            // platform-parallel files often share a name (Screen.kt / Screen.swift), but
+            // that is the expensive cross-platform coupling, not a cheap companion.
             // Unknown extensions compare by their raw extension, so an unrecognized
             // language pair (e.g. Foo.kt / Foo.php) is not understated as low effort.
             ka != kb -> Estimate(
                 "cross-language", "high",
                 "the two files are in different languages ($ka vs $kb) — a design coupling across a platform boundary is expensive to break; weigh it against the impact before committing.",
-            )
-            // Identical basename in sibling directories: a variant/lockstep set
-            // (per-crate Cargo.toml bumped by one release, values-*/strings.xml
-            // translated together). Calling that "interface/implementation" was
-            // simply the wrong description of the same low-surprise situation.
-            siblingVariants(a, b) -> Estimate(
-                "variant-set", "none",
-                "the same file name under sibling directories — a variant or lockstep set (coordinated version bumps, translations, per-target manifests). The coupling is the process, not an architectural boundary problem.",
             )
             namesRelated -> Estimate(
                 "companion", "low",

@@ -91,7 +91,8 @@ Analyzed 381 commits as 381 change units (unit: merge) in 0.5s
 # what the findings below rest on — here, real module roots, so nothing is withheld
 module detection [derived]: nearest directory with a build file, SwiftPM
   Sources/Tests target directory, repository root (build file at top level)
-  coverage: 100% of 850 files under a declared module root (34 modules, trust=declared)
+  coverage: 100% of 850 files under a declared module root (34 modules,
+    34 declared, trust=declared)
 
 Review candidates (12) — heuristic interpretations of the co-change evidence
 
@@ -116,6 +117,26 @@ finding-8 [split_candidate/source] impact=medium confidence=0.9
   co-changes between any two members of different groups:
   group 1 (3 files): AboutTabRoute.kt, AboutNavGraph.kt, AboutNavExtension.kt;
   group 2 (2 files): libs.versions.toml, KaigiAppUi.androidJvm.kt.
+```
+
+A Go repository has a single `go.mod`, so build files alone would see one module and withhold every boundary finding. The package — the directory — is the language's own unit, so it counts as a declared boundary:
+
+```text
+$ cochange analyze cli --since "2 years ago"
+change unit: merge (auto: merge-based history (87% of mainline commits are merges,
+  ~3.9 commits per merge))
+
+module detection [derived]: Go package directory, repository root (build file at top level)
+  coverage: 100% of 899 files under a declared module root (256 modules,
+    256 declared, trust=declared)
+
+Review candidates (36) — heuristic interpretations of the co-change evidence
+
+finding-1 [boundary_mismatch/source] impact=medium effort=medium confidence=1.0
+  issues.go (pkg/cmd/search/issues) and prs.go (pkg/cmd/search/prs) evolve as one
+  change unit across a module boundary
+  8 of 8 changes to issues.go also changed prs.go (100%), despite living in
+  different modules (pkg/cmd/search/issues vs pkg/cmd/search/prs).
 ```
 
 `confidence` is each type's own ratio: for `boundary_mismatch` P(other | rarer), for `unstable_hub` the share of multi-file changes the file was dragged into, for `split_candidate` the share of its own changes that involved a group. Use `--json` when you need the sample-corrected strength rather than the ratio.
