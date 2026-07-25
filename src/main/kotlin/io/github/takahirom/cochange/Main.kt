@@ -169,7 +169,7 @@ class Pairs : CliktCommand(
     private val top by option("--top", help = "Number of pairs to show").int().restrictTo(min = 1).default(50)
     private val file by option("--file", help = "Only pairs involving a path containing this substring")
     private val category by option("--category", help = "Only pairs in this category (source, config, build, docs, generated)")
-    private val analysis by option("--analysis", help = "Reuse the conditions (window/excludes/change-unit) from a saved analysis snapshot")
+    private val analysis by option("--analysis", help = "Reuse the conditions (window/excludes/change-unit) from a saved analysis snapshot. Replaces the history options above rather than combining with them")
     private val asJson by option("--json", help = "Print the pairs as JSON, with the run's pinned conditions and provenance").flag()
 
     override fun run() {
@@ -217,7 +217,7 @@ class ClustersCommand : CliktCommand(
     private val top by option("--top", help = "Number of clusters to show").int().restrictTo(min = 1).default(10)
     private val category by option("--category", help = "Only files in this category (source, config, build, docs, generated)")
     private val show by option("--show", help = "Expand one cluster (by its number) to its full file list").int().restrictTo(min = 1)
-    private val analysis by option("--analysis", help = "Reuse the conditions (window/excludes/change-unit) from a saved analysis snapshot")
+    private val analysis by option("--analysis", help = "Reuse the conditions (window/excludes/change-unit) from a saved analysis snapshot. Replaces the history options above rather than combining with them")
     private val noCollapse by option("--no-collapse", help = "Don't collapse synchronized sibling families (e.g. strings.xml across locales) into one node").flag()
     private val asJson by option("--json", help = "Print the clusters as JSON, with full file lists, the run's pinned conditions, and provenance").flag()
 
@@ -339,8 +339,15 @@ class ClustersCommand : CliktCommand(
             echo("  strongest pair: ${strongestOf(cluster)}")
         }
         echo("")
+        // Reproducing the clusters above needs the conditions they were computed under. With
+        // --analysis that is the snapshot, and emitting --since alongside it would print two
+        // conflicting sources for the same window.
         val opts = buildString {
-            history.since?.let { append(" --since \"$it\"") }
+            if (analysis != null) {
+                append(" --analysis $analysis")
+            } else {
+                history.since?.let { append(" --since \"$it\"") }
+            }
             append(" --min-support $minSupport --min-jaccard $minJaccard")
             category?.let { append(" --category $it") }
         }
@@ -355,7 +362,7 @@ class MetricsCommand : CliktCommand(
     private val path by argument(help = "Path to the Git repository").default(".")
     private val history by HistoryOptions()
     private val asJson by option("--json", help = "Machine-readable output for recording runs over time").flag()
-    private val analysis by option("--analysis", help = "Reuse the conditions (window/excludes/change-unit) from a saved analysis snapshot")
+    private val analysis by option("--analysis", help = "Reuse the conditions (window/excludes/change-unit) from a saved analysis snapshot. Replaces the history options above rather than combining with them")
 
     override fun run() {
         val repo = File(path).canonicalFile

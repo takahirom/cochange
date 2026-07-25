@@ -60,7 +60,7 @@ cochange findings . --analysis recent
 cochange inspect finding-1 . --analysis long-term
 ```
 
-Re-computing commands can replay a snapshot's conditions too — `cochange metrics . --analysis long-term` (also `pairs`, `clusters`) analyzes the same window, excludes, and change-unit as that snapshot instead of silently defaulting to all-history.
+Re-computing commands can replay a snapshot's conditions too — `cochange metrics . --analysis long-term` (also `pairs`, `clusters`) analyzes the same window, excludes, and change-unit as that snapshot instead of silently defaulting to all-history. `--analysis` **replaces** the history options rather than combining with them: the snapshot's own `--since`, `--branch`, `--change-unit` and excludes are used, and passing those flags alongside it has no effect. That is the point — the numbers are only comparable to that snapshot's if they were computed the same way.
 
 A snapshot stores its conditions **pinned**: the commit it ran on, `--since` as an absolute instant, and the change unit `auto` actually picked. So replaying it reads the same history rather than today's equivalent of "1 year ago". The JSON keeps both — `requestedOptions` (what you typed) and `options` (what it resolved to).
 

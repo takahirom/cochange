@@ -1,5 +1,6 @@
 package io.github.takahirom.cochange
 
+import com.github.ajalt.clikt.testing.test
 import kotlinx.serialization.json.Json
 import java.io.File
 import kotlin.test.AfterTest
@@ -119,5 +120,95 @@ class SnapshotForwardCompatibilityTest {
         assertTrue(parsed.warnings.isEmpty())
         assertEquals(DETECTOR_TYPES, parsed.detectorTypes)
         assertEquals(listOf("h1"), parsed.findings.single().detail.supportingChanges.single().hashes)
+    }
+}
+
+/**
+ * `snapshot records the analysis options for later reuse` only checks the JSON round-trip —
+ * it would still pass if `metrics`, `pairs` or `clusters` never called `resolveOptions()`.
+ * This drives the commands and asserts the snapshot's conditions are the ones they used.
+ */
+class AnalysisReuseCommandTest {
+    private val repo = File.createTempFile("cochange-reuse", "").apply { delete(); mkdirs() }
+
+    @AfterTest
+    fun cleanup() {
+        repo.deleteRecursively()
+    }
+
+    private fun git(vararg args: String) = GitLog.runGit(repo, args.toList())
+
+    /**
+     * A file that exists only in the OLD half of the history, so a command honouring the
+     * snapshot's narrow window cannot see it and one falling back to all-history can.
+     */
+    private fun buildRepo() {
+        git("init", "-q", "-b", "main")
+        git("config", "user.email", "dev@example.com")
+        git("config", "user.name", "Dev")
+        fun write(path: String, content: String) =
+            File(repo, path).apply { parentFile?.mkdirs() }.writeText(content)
+
+        fun commit(at: String, message: String) {
+            val p = ProcessBuilder(listOf("git", "-c", "commit.gpgsign=false", "commit", "-q", "-m", message))
+                .directory(repo).apply {
+                    environment()["GIT_AUTHOR_DATE"] = at
+                    environment()["GIT_COMMITTER_DATE"] = at
+                }.redirectErrorStream(true).start()
+            val out = p.inputStream.bufferedReader().readText()
+            check(p.waitFor() == 0) { "commit failed: $out" }
+        }
+        fun at(days: Long) = java.time.Instant.now().minus(java.time.Duration.ofDays(days)).toString()
+
+        write("build.gradle.kts", "// root")
+        // Old era, 300 days back: ANCIENT.kt moves with a partner.
+        for (i in 1..8) {
+            write("app/ANCIENT.kt", "a$i\n")
+            write("app/Partner.kt", "p$i\n")
+            git("add", "-A")
+            commit(at(300), "old $i")
+        }
+        // Recent era: a different pair entirely.
+        for (i in 1..8) {
+            write("app/Recent.kt", "r$i\n")
+            write("app/RecentPartner.kt", "q$i\n")
+            git("add", "-A")
+            commit(at(3), "recent $i")
+        }
+    }
+
+    @Test
+    fun `metrics, pairs and clusters use the snapshot's window, not the current defaults`() {
+        buildRepo()
+        // Save a snapshot restricted to the recent era only.
+        val save = Analyze().test(
+            listOf(repo.path, "--since", "30 days ago", "--change-unit", "commit", "--save", "recent-only"),
+        )
+        assertTrue(save.statusCode == 0, save.output)
+
+        // With --analysis, the old era must be invisible...
+        for ((name, out) in listOf(
+            "pairs" to Pairs().test(listOf(repo.path, "--analysis", "recent-only", "--min-support", "2")).output,
+            "clusters" to ClustersCommand().test(listOf(repo.path, "--analysis", "recent-only", "--min-support", "2")).output,
+        )) {
+            assertTrue(
+                "ANCIENT" !in out,
+                "$name ignored the snapshot's window and fell back to all-history:\n$out",
+            )
+            assertTrue("Recent" in out, "$name should still see the snapshot's own era:\n$out")
+        }
+        // ...and metrics must report the snapshot's unit count, not the whole history's.
+        val scoped = MetricsCommand().test(listOf(repo.path, "--analysis", "recent-only", "--json"))
+        val whole = MetricsCommand().test(listOf(repo.path, "--change-unit", "commit", "--json"))
+        val units = { s: String -> Regex("\"multiFileUnits\"\\s*:\\s*(\\d+)").find(s)!!.groupValues[1].toInt() }
+        assertTrue(
+            units(scoped.stdout) < units(whole.stdout),
+            "metrics saw ${units(scoped.stdout)} units with --analysis and ${units(whole.stdout)} without; " +
+                "the snapshot covers only half the history, so it must be fewer",
+        )
+
+        // Sanity: without --analysis the old era IS visible, so the assertions above bite.
+        val unscoped = Pairs().test(listOf(repo.path, "--change-unit", "commit", "--min-support", "2")).output
+        assertTrue("ANCIENT" in unscoped, "the fixture must actually contain the old era:\n$unscoped")
     }
 }
