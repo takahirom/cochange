@@ -256,7 +256,14 @@ data class SupportingChange(
  */
 @Serializable
 data class SplitGroup(
+    /** The group's members that are shown. Excluded roles are omitted; see [hiddenMembers]. */
     val files: List<String>,
+    /**
+     * Members omitted by `--exclude-role`. The group's [support] and [linkWeight] still
+     * count them, because a role filter must not move a number — this says how much of
+     * the group you are not being shown.
+     */
+    val hiddenMembers: Int = 0,
     /** Change units in which the candidate changed together with at least one file in this group. */
     val support: Int,
     /**

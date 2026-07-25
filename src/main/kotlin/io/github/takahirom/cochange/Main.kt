@@ -342,7 +342,9 @@ class MetricsCommand : CliktCommand(
         echo("")
         echo("module locality        ${fmt(m.moduleLocality)}  (${m.localUnits}/${m.declaredMultiFileUnits} declared-module units contained in one module)")
         echo("  adjusted for chance  ${fmt(m.adjustedLocality)}  (contribution of the module structure beyond random placement — a monolith scores ~0 here)")
-        echo("hub-free change rate   ${fmt(m.hubFreeRate)}  (${m.hubAvoidingUnits}/${m.multiFileUnits} units avoid the ${m.hubFiles.size} hub files)" +
+        val hiddenHubs = m.hubCount - m.hubFiles.size
+        echo("hub-free change rate   ${fmt(m.hubFreeRate)}  (${m.hubAvoidingUnits}/${m.multiFileUnits} units avoid the " +
+            "${m.hubCount} hub files${if (hiddenHubs > 0) ", $hiddenHubs hidden by --exclude-role" else ""})" +
             if (m.hubFreeRate == null) "  [needs >= 6 modules]" else "")
         m.hubFiles.take(3).forEach { echo("                         hub: $it") }
         echo("boundary integrity     ${fmt(m.boundaryIntegrity)}  (${m.hotspotFreeCrossUnits}/${m.crossModuleUnits} cross-module units avoid the ${m.boundaryHotspots} recurring hotspot pairs)")
@@ -380,7 +382,8 @@ class MetricsCommand : CliktCommand(
             echo("reading: ${"%.1f".format(m.effectiveModules)} effective modules x ${"%.0f".format(adjusted * 100)}% adjusted locality — $reading")
             echo("")
         }
-        echo("All scores are higher-is-better shares of change units. Read module locality TOGETHER with effective modules: a coarse partition is easy to comply with, so raising structure and keeping compliance is the goal. Trend within one repository under the same options; absolute values are not comparable across repos.")
+        echo("Scores are higher-is-better. All but one are shares of change units; adjusted locality " +
+            "is chance-corrected and can go negative (below what random placement would give). Read module locality TOGETHER with effective modules: a coarse partition is easy to comply with, so raising structure and keeping compliance is the goal. Trend within one repository under the same options; absolute values are not comparable across repos.")
     }
 
     private fun fmt(v: Double?) = if (v == null) "  N/A" else "%5.1f%%".format(v * 100)
@@ -485,7 +488,8 @@ class CompareCommand : CliktCommand(
             echo("No files reached --min-count ($minCount) in either window. Widen the windows or lower --min-count.")
             return
         }
-        val summary = Compare.summarize(moves)
+        // Computed over every mover, so a role filter changes the listing and not the trend.
+        val summary = computed.summary
         echo("summary: ${summary.heating} heating, ${summary.cooling} cooling, " +
             "mean shift ${"%.1f".format(summary.meanAbsShift * 100)}pp per listed file " +
             "(${moves.size} files at --min-count $minCount)")

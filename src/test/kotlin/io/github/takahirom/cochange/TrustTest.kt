@@ -482,6 +482,23 @@ class MetricsProvenanceTest {
     }
 
     @Test
+    fun `adjusted locality can be recomputed from the published numbers`() {
+        // Publishing a rounded expectedLocality broke the documented formula, so a
+        // consumer could not reproduce the score it is told how to compute.
+        val head = setOf("a/build.gradle.kts", "a/A.kt", "a/A2.kt", "b/build.gradle.kts", "b/B.kt")
+        val changes = List(6) { LogicalChange(listOf(commit("a/A.kt", "a/A2.kt"))) } +
+            List(6) { LogicalChange(listOf(commit("a/A.kt", "b/B.kt"))) }
+        val m = Metrics.compute(AnalysisContext(changes, Boundaries(head), head))
+        val expected = m.expectedLocality
+        val recomputed = (m.moduleLocality!! - expected) / (1 - expected)
+        assertTrue(
+            kotlin.math.abs(recomputed - m.adjustedLocality!!) < 1e-9,
+            "documented as (moduleLocality - expectedLocality) / (1 - expectedLocality); " +
+                "got $recomputed vs ${m.adjustedLocality}",
+        )
+    }
+
+    @Test
     fun `guessed folders do not become hotspots or modules`() {
         val head = setOf(
             "app/build.gradle.kts", "app/A.kt",

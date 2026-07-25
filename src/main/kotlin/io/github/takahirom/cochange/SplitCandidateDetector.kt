@@ -19,9 +19,14 @@ class SplitCandidateDetector(
 
     override fun detect(context: AnalysisContext): List<Finding> {
         // Co-change adjacency over all files, at the weaker partner-partner strength.
+        // Built over every file at HEAD, NOT filtered by role: the claim "this file's
+        // partners fall into N independent groups" is a statement about the whole history,
+        // and filtering the graph first made --exclude-role change a visible finding's
+        // group count, confidence and impact. Hidden partners are omitted from the group
+        // LISTING below, with the omission disclosed.
         val adjacency = HashMap<String, MutableMap<String, Int>>()
         for (p in context.pairs(minTogether = minPartnerLink)) {
-            if (!context.isVisible(p.a) || !context.isVisible(p.b)) continue
+            if (p.a !in context.headFiles || p.b !in context.headFiles) continue
             adjacency.getOrPut(p.a) { HashMap() }[p.b] = p.together
             adjacency.getOrPut(p.b) { HashMap() }[p.a] = p.together
         }
@@ -29,6 +34,8 @@ class SplitCandidateDetector(
         data class Candidate(val file: String, val components: List<List<String>>, val partnerSupport: Int)
 
         val candidates = adjacency.mapNotNull { (file, links) ->
+            // The candidate itself must be visible — it is what the finding is about.
+            if (!context.isVisible(file)) return@mapNotNull null
             val partners = links.filterValues { it >= minSupport }.keys
             if (partners.size < minComponentSize * 2) return@mapNotNull null
             val components = connectedComponents(partners, adjacency)
@@ -69,7 +76,8 @@ class SplitCandidateDetector(
             val structuredGroups = c.components.map { component ->
                 val seen = coChanges(file, component)
                 SplitGroup(
-                    files = component,
+                    files = component.filter(context::isVisible),
+                    hiddenMembers = component.count { !context.isVisible(it) },
                     support = seen?.first ?: 0,
                     linkWeight = component.sumOf { links[it] ?: 0 },
                     firstSeen = seen?.let { day(it.second) } ?: "",

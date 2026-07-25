@@ -141,3 +141,57 @@ class AggregateScoresIgnoreRoleFilterTest {
         assertTrue(shown.moves.any { it.file == "a/FooTest.kt" })
     }
 }
+
+/**
+ * The remaining places a role filter could still move a number: a split candidate's group
+ * count and confidence (the graph was filtered before scoring), and compare's trend
+ * aggregates (summarised after filtering).
+ */
+class RoleFilterLeavesEveryScoreTest {
+    private var t = 0L
+    private fun commit(vararg files: String): Commit {
+        t += 3600 * 24
+        return Commit("h$t", "dev", t, "m", files.toList())
+    }
+
+    private val head = setOf(
+        "app/Hub.kt", "app/A1.kt", "app/A2.kt", "app/B1.kt", "app/B2.kt",
+        "app/C1Test.kt", "app/C2Test.kt",
+    )
+
+    private fun context(vararg roles: String) = AnalysisContext(
+        List(6) { LogicalChange(listOf(commit("app/Hub.kt", "app/A1.kt", "app/A2.kt"))) } +
+            List(6) { LogicalChange(listOf(commit("app/Hub.kt", "app/B1.kt", "app/B2.kt"))) } +
+            List(6) { LogicalChange(listOf(commit("app/Hub.kt", "app/C1Test.kt", "app/C2Test.kt"))) },
+        Boundaries(head), head, excludedRoles = roles.toSet(),
+    )
+
+    @Test
+    fun `hiding tests does not change a split candidate's score or group count`() {
+        val detector = SplitCandidateDetector(minSupport = 5)
+        val shown = detector.detect(context()).single { it.subjects == listOf("app/Hub.kt") }
+        val hidden = detector.detect(context(FileRole.TEST)).single { it.subjects == listOf("app/Hub.kt") }
+        assertEquals(shown.confidence, hidden.confidence, "confidence moved")
+        assertEquals(shown.impact, hidden.impact, "impact moved")
+        assertEquals(
+            shown.detail.groups.size, hidden.detail.groups.size,
+            "the number of independent groups is a fact about the history, not about the view",
+        )
+        // The test group is still counted, and its members are simply not listed.
+        val hiddenGroup = hidden.detail.groups.single { it.hiddenMembers > 0 }
+        assertEquals(2, hiddenGroup.hiddenMembers)
+        assertTrue(hiddenGroup.files.isEmpty(), "both members of that group are tests")
+        assertTrue(hiddenGroup.support > 0, "its support still counts them")
+    }
+
+    @Test
+    fun `hiding tests does not change compare's trend numbers`() {
+        val shown = Compare.of(context(), context(), minCount = 1)
+        val hidden = Compare.of(context(FileRole.TEST), context(FileRole.TEST), minCount = 1)
+        assertEquals(shown.summary.heating, hidden.summary.heating)
+        assertEquals(shown.summary.cooling, hidden.summary.cooling)
+        assertEquals(shown.summary.totalAbsShift, hidden.summary.totalAbsShift, "the trend number moved")
+        assertEquals(shown.summary.meanAbsShift, hidden.summary.meanAbsShift)
+        assertTrue(hidden.moves.none { it.file.endsWith("Test.kt") }, "the listing still respects the filter")
+    }
+}

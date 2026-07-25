@@ -11,7 +11,7 @@ enum class ModuleSource(val declared: Boolean, val label: String) {
     BUILD_FILE(true, "nearest directory with a build file"),
     SWIFT_TARGET(true, "SwiftPM Sources/Tests target directory"),
     GO_PACKAGE(true, "Go package directory"),
-    PYTHON_PACKAGE(true, "Python package directory (__init__.py)"),
+    PYTHON_PACKAGE(true, "Python package directory (__init__.py or __init__.pyi)"),
     USER_GLOB(true, "--module-root glob"),
     ROOT_BUILD_FILE(true, "repository root (build file at top level)"),
     NOT_OUR_CODE(false, "vendored or fixture directory (not this repository's structure)"),
@@ -208,7 +208,10 @@ class Boundaries(headFiles: Set<String>, moduleRootGlobs: List<String> = emptyLi
         // exactly meant `src/flask/sansio/app.py` fell all the way back to the root
         // module and appeared to cross a boundary with its own package's files.
         ModuleSource.PYTHON_PACKAGE ->
-            PYTHON_EXTENSIONS.any { path.endsWith(it) } && (dir == root || dir.startsWith("$root/"))
+            // root == "" is the repository root, where "$root/" would be "/" and match
+            // nothing, so a root-level package failed to cover sansio/app.py.
+            PYTHON_EXTENSIONS.any { path.endsWith(it) } &&
+                (dir == root || root.isEmpty() || dir.startsWith("$root/"))
         else -> root.isNotEmpty() && (dir == root || dir.startsWith("$root/"))
     }
 

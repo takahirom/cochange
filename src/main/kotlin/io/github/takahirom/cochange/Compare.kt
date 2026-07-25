@@ -50,9 +50,16 @@ object Compare {
         return counts to multiFile.size
     }
 
-    /** The comparison and the exact denominators it was computed against. */
+    /**
+     * The comparison and the exact denominators it was computed against.
+     *
+     * [summary] is computed over every mover, including those a role filter hides, so
+     * `--exclude-role test` changes what is listed and never the trend number. [moves] is
+     * the listing.
+     */
     data class Comparison(
         val moves: List<Move>,
+        val summary: Summary,
         val baselineMultiFile: Int,
         val recentMultiFile: Int,
     )
@@ -66,8 +73,7 @@ object Compare {
         val (recentCounts, recentUnits) = participation(recent)
         // Rates came from the full population above; hidden roles are dropped here, where
         // we choose what to list.
-        val moves = (baseCounts.keys + recentCounts.keys)
-            .filter { recent.isVisible(it) || baseline.isVisible(it) }
+        val allMoves = (baseCounts.keys + recentCounts.keys)
             .mapNotNull { file ->
             val bc = baseCounts[file] ?: 0
             val rc = recentCounts[file] ?: 0
@@ -80,7 +86,10 @@ object Compare {
                 recentCount = rc,
             )
         }
-        return Comparison(moves, baseUnits, recentUnits)
+        // The summary describes the whole window; hidden roles are dropped from the
+        // listing only. Aggregating after filtering moved heating/cooling and meanAbsShift.
+        val moves = allMoves.filter { recent.isVisible(it.file) || baseline.isVisible(it.file) }
+        return Comparison(moves, summarize(allMoves), baseUnits, recentUnits)
     }
 
     /**
@@ -108,7 +117,7 @@ object Compare {
         recentWindowAloneWouldUse: String,
     ): String {
         val moves = comparison.moves
-        val s = summarize(moves)
+        val s = comparison.summary
         return json.encodeToString(
             CompareReport.serializer(),
             CompareReport(

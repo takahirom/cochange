@@ -43,6 +43,8 @@ data class RepoMetrics(
     val crossModuleUnits: Int,
     val localUnits: Int,
     val hubAvoidingUnits: Int,
+    /** Hubs the rate counted, including any hidden from [hubFiles] by a role filter. */
+    val hubCount: Int,
     val hotspotFreeCrossUnits: Int,
     /** Hub files (participation >= 20 units, >= 5 partner modules), most active first. */
     val hubFiles: List<String>,
@@ -144,12 +146,16 @@ object Metrics {
             crossModuleUnits = crossModule.size,
             localUnits = localUnits,
             hubAvoidingUnits = hubAvoiding,
+            hubCount = hubFiles.size,
             hotspotFreeCrossUnits = hotspotFreeCross,
             // Listed for a reader, so hidden roles are dropped here — the rate above used
             // the full set, which is what keeps --exclude-role from moving a score.
             hubFiles = hubFiles.filter(context::isVisible),
             boundaryHotspots = hotspots.size,
-            topHotspot = hotspots.maxByOrNull { it.together },
+            // Listed, so hidden roles are dropped here — an excluded pair must not have
+            // its paths printed. The hotspot COUNT above still includes it.
+            topHotspot = hotspots.filter { context.isVisible(it.a) && context.isVisible(it.b) }
+                .maxByOrNull { it.together },
             windowYears = windowYears,
             expectedLocality = expectedLocal,
         )
@@ -170,8 +176,11 @@ object Metrics {
             crossModuleUnits = m.crossModuleUnits,
             localUnits = m.localUnits,
             hubAvoidingUnits = m.hubAvoidingUnits,
+            hubCount = m.hubCount,
             hotspotFreeCrossUnits = m.hotspotFreeCrossUnits,
-            expectedLocality = round2(m.expectedLocality),
+            // Unrounded: rounding it broke the promise that adjustedLocality can be
+            // recomputed as (moduleLocality - expectedLocality) / (1 - expectedLocality).
+            expectedLocality = m.expectedLocality,
             effectiveModules = m.effectiveModules,
             distinctModules = m.distinctModules,
             lowResolution = m.lowResolution,
@@ -207,6 +216,8 @@ data class MetricsReport(
     val localUnits: Int,
     /** Numerator of [hubFreeRate], over [multiFileUnits]. */
     val hubAvoidingUnits: Int,
+    /** Hub files the rate was computed against, including any a role filter hides from [hubFiles]. */
+    val hubCount: Int,
     /** Numerator of [boundaryIntegrity], over [crossModuleUnits]. */
     val hotspotFreeCrossUnits: Int,
     /**

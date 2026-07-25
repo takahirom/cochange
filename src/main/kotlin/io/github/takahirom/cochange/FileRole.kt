@@ -21,6 +21,7 @@ object FileRole {
     private val lockfileNames = setOf(
         "package-lock.json", "yarn.lock", "pnpm-lock.yaml", "podfile.lock",
         "cargo.lock", "gemfile.lock", "go.sum", "poetry.lock", "composer.lock",
+        "package.resolved", "packages.lock.json", "flake.lock", "uv.lock",
     )
     private val resourceExtensions = setOf("xml", "strings", "xcstrings", "storyboard", "xib", "pbxproj", "plist")
 
