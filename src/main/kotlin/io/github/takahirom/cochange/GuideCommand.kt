@@ -237,6 +237,11 @@ private val GUIDE_TOPICS: Map<String, String> = linkedMapOf(
         Release branches merged back into a PR-based main appear as one
         combined unit each; they're usually few and small, but check with
         `git log --first-parent --merges` if numbers look off.
+        compare pins BOTH windows to the unit its baseline resolved to, and
+        prints it. If it warns that the recent window alone would use a
+        different unit, the repo changed its merge habit: rates moved partly
+        because the granularity fits that window worse, not only because files
+        became more or less central.
     """.trimIndent(),
 
     "small-repo" to """

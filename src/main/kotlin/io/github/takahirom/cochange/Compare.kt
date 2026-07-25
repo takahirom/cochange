@@ -98,6 +98,7 @@ object Compare {
     fun encode(
         repo: String, branch: String, shallow: Boolean, minCount: Int, category: String?,
         baseline: Window, recent: Window, comparison: Comparison,
+        changeUnit: String, changeUnitReason: String, recentWindowAloneWouldUse: String,
     ): String {
         val moves = comparison.moves
         val s = summarize(moves)
@@ -106,6 +107,8 @@ object Compare {
             CompareReport(
                 repo = repo, branch = branch, shallow = shallow, minCount = minCount, category = category,
                 baseline = baseline, recent = recent,
+                changeUnit = changeUnit, changeUnitReason = changeUnitReason,
+                recentWindowAloneWouldUse = recentWindowAloneWouldUse,
                 windowsOverlap = overlaps(baseline, recent),
                 heating = s.heating, cooling = s.cooling,
                 totalAbsShift = round4(s.totalAbsShift), meanAbsShift = round4(s.meanAbsShift),
@@ -140,6 +143,16 @@ object Compare {
         val category: String?,
         val baseline: Window,
         val recent: Window,
+        /** The unit both windows were counted in — never resolved per window, or the rates would not be comparable. */
+        val changeUnit: String,
+        val changeUnitReason: String,
+        /**
+         * What `auto` would have chosen for the recent window on its own. When it differs
+         * from [changeUnit], the history's shape changed mid-window: rates can move
+         * because the granularity fits the recent window worse, not because a file
+         * became more central.
+         */
+        val recentWindowAloneWouldUse: String,
         val windowsOverlap: Boolean,
         val heating: Int,
         val cooling: Int,
