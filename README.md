@@ -120,6 +120,8 @@ cluster 4: 4 files, 6 strong pairs (pair-support volume 30)
 
 Each cluster is a real change unit the module structure doesn't show: the session-detail screen with its translated strings (cluster 1), and the KMP entry points above (cluster 4).
 
+Synchronized sibling files (e.g. `values/strings.xml` + `values-ja/strings.xml` + … — same basename, sibling directories, one module, that history shows always move together) are collapsed into a single node so a translation or variant set can't dominate a cluster or manufacture a hub. The family is learned from the repo, not from a locale/ecosystem list, and only collapsed when the co-change actually confirms it. Raw pairs are untouched; `--no-collapse` expands them.
+
 `inspect` returns JSON with observation / interpretations / counterSignals / supportingChanges (commit hashes), giving an AI a concrete starting point before it reads any code. For `split_candidate` it also returns `groups` — each independent partner cluster in full, with its `support` and `activeFrom`/`activeTo` dates, so you can tell "two responsibilities" apart from "old vs new era of one".
 
 `metrics` condenses the whole analysis into a few higher-is-better scores plus a one-line reading of what to do next — meant to be trended within one repo (same options, `--json`) rather than compared across repos:

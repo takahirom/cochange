@@ -183,18 +183,30 @@ class ClustersCommand : CliktCommand(
     private val category by option("--category", help = "Only files in this category (source, config, build, docs, generated)")
     private val show by option("--show", help = "Expand one cluster (by its number) to its full file list").int().restrictTo(min = 1)
     private val analysis by option("--analysis", help = "Reuse the conditions (window/excludes/change-unit) from a saved analysis snapshot")
+    private val noCollapse by option("--no-collapse", help = "Don't collapse synchronized sibling families (e.g. strings.xml across locales) into one node").flag()
 
     override fun run() {
         val repo = File(path).canonicalFile
         val setup = Analysis.contextFor(repo, resolveOptions(path, analysis, history))
-        val context = setup.context
-        val boundaries = context.boundaries
+        val rawContext = setup.context
+        val boundaries = rawContext.boundaries
+        val families = if (noCollapse) emptyList() else Families.detect(rawContext, boundaries)
+        val famByRep = families.associateBy { it.representative }
+        // Collapse families to their representative so a locale/variant set is one node.
+        val context = Families.project(rawContext, boundaries, families)
         val clusters = Clusters.build(context, minSupport, minJaccard) {
             category == null || context.categoryOf(it) == category
         }
 
+        fun label(file: String): String {
+            val fam = famByRep[file] ?: return file
+            val siblings = fam.members.filter { it != file }.map { it.substringBeforeLast('/').substringAfterLast('/') }
+            return "$file (+${siblings.size} sibling${if (siblings.size == 1) "" else "s"}: ${siblings.joinToString(", ")})"
+        }
+
         printBanner(setup, { m, e -> echo(m, err = e) }, compact = true)
         echo("edge thresholds: min-support=$minSupport min-jaccard=$minJaccard")
+        if (families.isNotEmpty()) echo("collapsed ${families.size} synchronized sibling ${if (families.size == 1) "family" else "families"} (e.g. ${famByRep.keys.first().substringAfterLast('/')} across ${famByRep.values.first().members.size}) — use --no-collapse to expand", err = true)
         if (clusters.isEmpty()) {
             echo("No clusters above thresholds. Try lowering --min-support / --min-jaccard.")
             return
@@ -216,7 +228,7 @@ class ClustersCommand : CliktCommand(
             echo("")
             echo("cluster $showIdx: ${cluster.files.size} files, ${cluster.edges.size} strong pairs (pair-support volume ${cluster.pairSupportVolume})")
             for (file in cluster.files) {
-                echo("  ${file} (${context.changeCount(file)} changes, ${boundaries.moduleOf(file)})")
+                echo("  ${label(file)} (${context.changeCount(file)} changes, ${boundaries.moduleOf(file)})")
             }
             echo("  strongest pair: ${strongestOf(cluster)}")
             return
