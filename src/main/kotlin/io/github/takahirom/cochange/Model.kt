@@ -22,6 +22,24 @@ data class LogicalChange(
     val hashes: List<String> = commits.map { it.hash }
 }
 
+/**
+ * Shortest path suffixes that tell two files apart: their basenames when those
+ * differ, otherwise enough trailing directories to disambiguate — so a pair of
+ * `strings.xml` reads as `values/strings.xml` vs `values-ja/strings.xml`, not
+ * `strings.xml x strings.xml`.
+ */
+fun distinguishingLabels(a: String, b: String): Pair<String, String> {
+    val sa = a.split('/')
+    val sb = b.split('/')
+    var k = 1
+    while (true) {
+        val la = sa.takeLast(k).joinToString("/")
+        val lb = sb.takeLast(k).joinToString("/")
+        if (la != lb || (k >= sa.size && k >= sb.size)) return la to lb
+        k++
+    }
+}
+
 @Serializable
 data class Finding(
     val id: String,
