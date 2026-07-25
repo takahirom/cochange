@@ -125,11 +125,15 @@ class AnalysisContext(
             PairStat(idToPath[aId], idToPath[bId], together, fileChangeCountById[aId]!!, fileChangeCountById[bId]!!)
         }
 
-    /** Sample commit hashes (newest-first order of [changes]) touching all of [files]. */
-    fun sampleChanges(files: Set<String>, limit: Int = 10): List<String> =
+    /**
+     * Sample change units (newest-first order of [changes]) touching all of [files],
+     * each with every commit it contains — the unit, not its first commit, is what
+     * the co-change evidence was counted from.
+     */
+    fun sampleChanges(files: Set<String>, limit: Int = 10): List<SupportingChange> =
         changes.asSequence()
             .filter { it.files.containsAll(files) }
             .take(limit)
-            .map { it.hashes.first() }
+            .map { SupportingChange(it.hashes) }
             .toList()
 }

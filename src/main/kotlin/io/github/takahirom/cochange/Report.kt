@@ -119,6 +119,20 @@ data class CommitSummary(
 )
 
 /**
+ * One supporting change unit with its commits resolved. [filesTouched] is the
+ * finding's own files that this unit touched, across all of its commits — the
+ * direct answer to "did both sides really move here", which reading a single
+ * commit cannot give.
+ */
+@Serializable
+data class SupportingChangeReport(
+    val hashes: List<String>,
+    val commits: List<CommitSummary>,
+    val filesTouched: List<String>,
+    val tier: String = EvidenceTier.EVIDENCE,
+)
+
+/**
  * `inspect` output: the finding plus the run it came from. A bare finding gave a
  * consumer no way to tell which window produced it, whether the clone was
  * shallow, or whether the module names in its summary were real module roots.
@@ -142,8 +156,13 @@ data class InspectReport(
     /** True when HEAD has moved since the snapshot was taken. */
     val stale: Boolean = false,
     val finding: Finding,
-    /** [Finding.detail]'s supportingChanges hashes resolved against the repository, when it is reachable. */
-    val supportingCommits: List<CommitSummary> = emptyList(),
+    /**
+     * [Finding.detail]'s supporting change units, resolved against the repository when
+     * it is reachable — grouped by unit, because "did both files change here" is a
+     * question about the unit, and an author-window unit can spread the two sides
+     * across separate commits.
+     */
+    val supportingChanges: List<SupportingChangeReport> = emptyList(),
     val tiers: Map<String, String> = RunContext.TIER_MEANINGS,
 )
 

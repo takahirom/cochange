@@ -164,10 +164,28 @@ data class FindingDetail(
     val observation: String,
     val interpretations: List<String>,
     val counterSignals: List<String>,
-    val supportingChanges: List<String>,
+    /**
+     * The change units backing this finding, each with ALL of its commits. Storing
+     * only the first commit of each unit meant an author-window unit — commit 1
+     * touches A.kt, commit 2 touches B.kt ten minutes later — looked like a change
+     * to A.kt alone, which is exactly the wrong conclusion to invite.
+     */
+    val supportingChanges: List<SupportingChange>,
     val metrics: Map<String, String> = emptyMap(),
     /** For split_candidate: the independent partner clusters, in full, with their support and active period. */
     val groups: List<SplitGroup> = emptyList(),
+)
+
+/**
+ * One change unit that backs a finding. A unit is not always one commit: under
+ * `author-window` it is every commit by the same author inside the window, and the
+ * co-change evidence comes from the unit as a whole, so all of its commits belong
+ * here.
+ */
+@Serializable
+data class SupportingChange(
+    val hashes: List<String>,
+    val tier: String = EvidenceTier.EVIDENCE,
 )
 
 /**

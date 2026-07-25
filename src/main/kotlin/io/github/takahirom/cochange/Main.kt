@@ -489,9 +489,21 @@ class Inspect : CliktCommand(
             ?: error("no finding '$id' — available: ${result.findings.joinToString(", ") { it.id }}")
         // Resolve the hashes now rather than storing subjects and churn in the cache:
         // an older snapshot benefits too, and the cache stays a cache.
-        val commits = runCatching {
-            GitLog.commitSummaries(repo, finding.detail.supportingChanges, finding.files.toSet())
-        }.getOrDefault(emptyList())
+        val findingFiles = finding.files.toSet()
+        val byHash = runCatching {
+            GitLog.commitSummaries(repo, finding.detail.supportingChanges.flatMap { it.hashes }, findingFiles)
+                .associateBy { it.hash }
+        }.getOrDefault(emptyMap())
+        val supporting = finding.detail.supportingChanges.map { unit ->
+            val commits = unit.hashes.mapNotNull { byHash[it] }
+            SupportingChangeReport(
+                hashes = unit.hashes,
+                commits = commits,
+                // Union across the unit's commits, so a two-commit author-window unit
+                // shows both sides instead of only whichever came first.
+                filesTouched = commits.flatMap { it.churn.keys }.distinct().filter { it in findingFiles }.sorted(),
+            )
+        }
         val current = runCatching { GitLog.headCommit(repo, null) }.getOrNull()
         echo(reportJson.encodeToString(
             InspectReport.serializer(),
@@ -511,7 +523,7 @@ class Inspect : CliktCommand(
                 hiddenByRole = result.hiddenByRole,
                 stale = current != null && result.headCommit.isNotEmpty() && current != result.headCommit,
                 finding = finding,
-                supportingCommits = commits,
+                supportingChanges = supporting,
             ),
         ))
     }

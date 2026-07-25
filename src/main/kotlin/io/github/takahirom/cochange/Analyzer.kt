@@ -310,7 +310,7 @@ class UnstableHubDetector(
                             "Registration points (DI modules, navigation graphs, string resources) legitimately change with many features; the question is whether the churn is additive-only or structural.",
                         ),
                         supportingChanges = multiFileChanges.asSequence()
-                            .filter { file in it.files }.take(10).map { it.hashes.first() }.toList(),
+                            .filter { file in it.files }.take(10).map { SupportingChange(it.hashes) }.toList(),
                         metrics = mapOf(
                             "participation" to count.toString(),
                             "multiFileChanges" to multiFileChanges.size.toString(),

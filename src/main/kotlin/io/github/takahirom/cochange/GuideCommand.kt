@@ -78,9 +78,11 @@ private val GUIDE_TOPICS: Map<String, String> = linkedMapOf(
              type + impact; ignore build/docs categories on a first pass.
           3. cochange inspect <finding-id> <repo>
              Read observation, counterSignals, and evidence — not just the
-             summary. supportingCommits give each backing change's subject,
-             date, and per-file churn: read two or three before claiming the
-             files change for the same reason.
+             summary. supportingChanges gives each backing CHANGE UNIT, with
+             every commit in it (subject, date, per-file churn) and
+             filesTouched — the finding's files that unit actually moved. Read
+             two or three before claiming the files change for the same reason.
+             A unit can be several commits, so judge the unit, not one commit.
           4. cochange clusters <repo> --category source
              The de-facto change units. Use when findings feel fragmented —
              clusters show the whole group a pair belongs to.
@@ -102,10 +104,12 @@ private val GUIDE_TOPICS: Map<String, String> = linkedMapOf(
           2. For each candidate, inspect it and check metrics: both directional
              probabilities strong -> genuine shared change reason. One-sided ->
              the partner may just be a widely shared file; deprioritize.
-          3. Read two or three supportingCommits: subject and per-file churn
-             say what actually changed together. An interface mirrored into an
-             implementation? A flag definition plus its fake? Churn concentrated
-             on one side each time suggests one file is merely dragged along.
+          3. Read two or three supportingChanges: each unit's commits, subjects
+             and per-file churn say what actually changed together. An interface
+             mirrored into an implementation? A flag definition plus its fake?
+             Churn concentrated on one side each time suggests one file is
+             merely dragged along — but check filesTouched first, because one
+             unit can spread the two sides across separate commits.
         Options to propose, in order of preference:
           - Move the pair into the module where the change reason lives.
           - Introduce an interface/abstraction that absorbs the shared reason,
@@ -122,7 +126,7 @@ private val GUIDE_TOPICS: Map<String, String> = linkedMapOf(
         Recipe:
           1. cochange findings <repo> --type unstable_hub --json
           2. For each hub, decide additive vs structural churn:
-             `git -C <repo> show <hash>` a few supportingChanges. Lines only
+             `git -C <repo> show <hash>` a few supportingChanges hashes. Lines only
              ADDED to a list/registry each time (DI wiring, version catalogs,
              flag registries) = additive. Logic edited each time = structural.
           3. Additive churn: acceptable, or automate the registration
