@@ -39,15 +39,13 @@ object Compare {
 
     /** file -> count of multi-file changes touching it, and the number of multi-file changes in the window. */
     private fun participation(context: AnalysisContext): Pair<Map<String, Int>, Int> {
-        // "Multi-file" has to mean multi-*visible*-file, or a change with one visible
-        // file and one hidden one inflates the denominator without ever contributing
-        // a pair to the numerator.
-        val multiFile = context.changes.filter { change -> change.files.count { context.isVisible(it) } >= 2 }
+        // The denominator is every multi-file unit, and participation is counted for every
+        // file — `--exclude-role` is a view filter, so it must not move a rate. Hidden
+        // files are dropped from the LISTING in Compare.of instead.
+        val multiFile = context.changes.filter { it.files.size >= 2 }
         val counts = HashMap<String, Int>()
         for (change in multiFile) {
-            // isVisible, not just headFiles: --exclude-role has to hide files here too,
-            // or compare lists the tests the rest of the tool agreed to hide.
-            for (file in change.files) if (context.isVisible(file)) counts.merge(file, 1, Int::plus)
+            for (file in change.files) if (file in context.headFiles) counts.merge(file, 1, Int::plus)
         }
         return counts to multiFile.size
     }
@@ -66,7 +64,11 @@ object Compare {
     fun of(baseline: AnalysisContext, recent: AnalysisContext, minCount: Int = 3): Comparison {
         val (baseCounts, baseUnits) = participation(baseline)
         val (recentCounts, recentUnits) = participation(recent)
-        val moves = (baseCounts.keys + recentCounts.keys).mapNotNull { file ->
+        // Rates came from the full population above; hidden roles are dropped here, where
+        // we choose what to list.
+        val moves = (baseCounts.keys + recentCounts.keys)
+            .filter { recent.isVisible(it) || baseline.isVisible(it) }
+            .mapNotNull { file ->
             val bc = baseCounts[file] ?: 0
             val rc = recentCounts[file] ?: 0
             if (bc < minCount && rc < minCount) return@mapNotNull null

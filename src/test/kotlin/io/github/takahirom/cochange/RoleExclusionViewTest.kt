@@ -92,3 +92,52 @@ class RoleExclusionViewTest {
         assertTrue(run.findings.any { "CheckoutTest" in it.summary || "CheckoutTest" in it.detail.observation })
     }
 }
+
+/**
+ * The promise is that `--exclude-role` never shifts a number. It was being broken by
+ * aggregate scores whose numerator honoured the filter while their denominator did not:
+ * hiding a hub raised `hubFreeRate`, and hiding a hotspot raised `boundaryIntegrity` from
+ * 0 to 1. Scores are now computed over the whole population; only listings are filtered.
+ */
+class AggregateScoresIgnoreRoleFilterTest {
+    private var t = 0L
+    private fun commit(vararg files: String): Commit {
+        t += 3600 * 24
+        return Commit("h$t", "dev", t, "m", files.toList())
+    }
+
+    private val head = setOf(
+        "a/build.gradle.kts", "a/FooTest.kt", "a/Foo.kt",
+        "b/build.gradle.kts", "b/BarTest.kt", "b/Bar.kt",
+    )
+
+    private fun context(vararg roles: String) = AnalysisContext(
+        List(8) { LogicalChange(listOf(commit("a/FooTest.kt", "b/BarTest.kt"))) } +
+            List(8) { LogicalChange(listOf(commit("a/Foo.kt", "b/Bar.kt"))) },
+        Boundaries(head), head, excludedRoles = roles.toSet(),
+    )
+
+    @Test
+    fun `hiding tests does not move a single metric`() {
+        val shown = Metrics.compute(context())
+        val hidden = Metrics.compute(context(FileRole.TEST))
+        assertEquals(shown.boundaryIntegrity, hidden.boundaryIntegrity, "boundaryIntegrity moved")
+        assertEquals(shown.moduleLocality, hidden.moduleLocality, "moduleLocality moved")
+        assertEquals(shown.hubFreeRate, hidden.hubFreeRate, "hubFreeRate moved")
+        assertEquals(shown.multiFileUnits, hidden.multiFileUnits)
+        assertEquals(shown.declaredMultiFileUnits, hidden.declaredMultiFileUnits)
+        assertEquals(shown.crossModuleUnits, hidden.crossModuleUnits)
+        assertEquals(shown.boundaryHotspots, hidden.boundaryHotspots, "a hidden hotspot is still a hotspot")
+    }
+
+    @Test
+    fun `hiding tests does not move a compare rate, only the listing`() {
+        val shown = Compare.of(context(), context(), minCount = 1)
+        val hidden = Compare.of(context(FileRole.TEST), context(FileRole.TEST), minCount = 1)
+        assertEquals(shown.baselineMultiFile, hidden.baselineMultiFile, "the denominator must not move")
+        val visibleRate = { c: Compare.Comparison -> c.moves.single { it.file == "a/Foo.kt" }.baselineRate }
+        assertEquals(visibleRate(shown), visibleRate(hidden), "a visible file's rate must not move")
+        assertTrue(hidden.moves.none { it.file == "a/FooTest.kt" }, "the hidden file is not listed")
+        assertTrue(shown.moves.any { it.file == "a/FooTest.kt" })
+    }
+}

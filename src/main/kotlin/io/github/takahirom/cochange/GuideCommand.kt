@@ -70,8 +70,9 @@ private val GUIDE_TOPICS: Map<String, String> = linkedMapOf(
              about files on both sides of a boundary the repo DECLARES (build
              file, SwiftPM target, --module-root glob). With fewer than two
              declared modules, boundary_mismatch and unstable_hub are WITHHELD
-             entirely, not empty. Low coverage means individual pairs were
-             dropped instead. Either way: inspect the directory layout and
+             entirely, not empty — split_candidate needs no boundaries and
+             still runs. Low coverage means individual pairs were dropped
+             instead. Either way: inspect the directory layout and
              re-run with --module-root '<dir-pattern>/*'. Go and Python
              packages are detected from the language's own rule (a directory
              of .go files; a directory with __init__.py), so those need no
@@ -219,8 +220,10 @@ private val GUIDE_TOPICS: Map<String, String> = linkedMapOf(
         files inside a module the repository declares; pairs resting on a
         guessed folder name are dropped one by one, so low coverage means "you
         are seeing less", not "these are guesses". With fewer than two declared
-        modules nothing runs at all and skippedDetectors says so — a withheld
-        answer, not "nothing found".
+        modules the two module-dependent detectors do not run at all and
+        skippedDetectors says so — a withheld answer, not "nothing found".
+        split_candidate needs no boundaries and is unaffected. detectorTypes
+        lists the full roster, so you never have to guess which ran.
 
         Check a finding, in order:
           1. evidence.support vs evidence.sampleSize, and read

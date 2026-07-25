@@ -684,7 +684,7 @@ private fun printFindingsSummary(result: AnalysisResult, echo: (String) -> Unit)
         // "No findings" has several very different causes, and telling the reader to lower
         // a threshold is the right advice for only one of them.
         val withheld = result.skippedDetectors.map { it.type }
-        val ran = (result.detectorTypes - withheld.toSet()).size
+        val ran = (result.detectorTypes.toSet() - withheld.toSet()).size
         echo(
             when {
                 withheld.isNotEmpty() && ran == 0 ->

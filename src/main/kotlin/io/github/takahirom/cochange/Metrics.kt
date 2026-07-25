@@ -51,6 +51,8 @@ data class RepoMetrics(
     val topHotspot: AnalysisContext.PairStat?,
     /** Window length in years derived from the analyzed commits, for per-year costs. */
     val windowYears: Double,
+    /** Locality a random placement would have produced — the baseline [adjustedLocality] corrects against. */
+    val expectedLocality: Double,
 )
 
 object Metrics {
@@ -97,6 +99,8 @@ object Metrics {
         // uses, so the two can no longer report different hub sets. Note its population
         // is every multi-file unit — NOT the declared-projected `multiFile` above — so
         // the hub-free rate is a share of all multi-file units.
+        // Unfiltered for the rate; the displayed list below is filtered. Otherwise
+        // `--exclude-role test` moved hubFreeRate, which the tool promises it cannot.
         val hubFiles = context.hubFiles(minParticipation = 20, minModuleSpread = 5)
         val allMultiFile = context.hubStats.multiFileChanges
         // With < 6 modules the >= 5 partner-module predicate is unsatisfiable;
@@ -105,7 +109,7 @@ object Metrics {
         val hubAvoiding = allMultiFile.count { change -> change.files.none { it in hubFiles } }
 
         val hotspots = context.pairs(minTogether = 5)
-            .filter { context.isVisible(it.a) && context.isVisible(it.b) }
+            // Not filtered by visibility: a hidden hotspot must not raise boundaryIntegrity.
             .filter { declared(it.a) && declared(it.b) }
             .filter { boundaries.moduleOf(it.a) != boundaries.moduleOf(it.b) }
             .filter { it.confidence >= 0.6 }
@@ -141,10 +145,13 @@ object Metrics {
             localUnits = localUnits,
             hubAvoidingUnits = hubAvoiding,
             hotspotFreeCrossUnits = hotspotFreeCross,
-            hubFiles = hubFiles,
+            // Listed for a reader, so hidden roles are dropped here — the rate above used
+            // the full set, which is what keeps --exclude-role from moving a score.
+            hubFiles = hubFiles.filter(context::isVisible),
             boundaryHotspots = hotspots.size,
             topHotspot = hotspots.maxByOrNull { it.together },
             windowYears = windowYears,
+            expectedLocality = expectedLocal,
         )
     }
 
@@ -164,6 +171,7 @@ object Metrics {
             localUnits = m.localUnits,
             hubAvoidingUnits = m.hubAvoidingUnits,
             hotspotFreeCrossUnits = m.hotspotFreeCrossUnits,
+            expectedLocality = round2(m.expectedLocality),
             effectiveModules = m.effectiveModules,
             distinctModules = m.distinctModules,
             lowResolution = m.lowResolution,
@@ -201,6 +209,12 @@ data class MetricsReport(
     val hubAvoidingUnits: Int,
     /** Numerator of [boundaryIntegrity], over [crossModuleUnits]. */
     val hotspotFreeCrossUnits: Int,
+    /**
+     * The locality a random file placement would have produced, given each module's share
+     * of activity. [adjustedLocality] is `(moduleLocality - this) / (1 - this)`, which a
+     * consumer could not reproduce while this was unpublished.
+     */
+    val expectedLocality: Double,
     val effectiveModules: Double,
     val distinctModules: Int,
     val lowResolution: Boolean,

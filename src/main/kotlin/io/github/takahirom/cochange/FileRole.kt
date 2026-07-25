@@ -24,9 +24,21 @@ object FileRole {
     )
     private val resourceExtensions = setOf("xml", "strings", "xcstrings", "storyboard", "xib", "pbxproj", "plist")
 
-    fun of(path: String): String {
+    fun of(path: String): String = ofPath(path, generated = emptySet())
+
+    /**
+     * As [of], but honouring the repository's own `linguist-generated` declarations.
+     * `--exclude-role generated` used to miss them: [FileCategory] called such a file
+     * generated while this returned `source`, so the role filter did not hide it.
+     */
+    fun of(path: String, generated: Set<String>): String = ofPath(path, generated)
+
+    private fun ofPath(path: String, generated: Set<String>): String {
         val name = path.substringAfterLast('/')
-        val lower = path.lowercase()
+        // A leading slash so the directory patterns below also match at the top level:
+        // "test/helpers.kt" and "assets/logo.bin" used to come back as source.
+        val lower = "/" + path.lowercase()
+        if (path in generated) return GENERATED
         val ext = name.substringAfterLast('.', "").lowercase()
         return when {
             isTest(lower, name) -> TEST

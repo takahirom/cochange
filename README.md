@@ -71,7 +71,7 @@ cochange analyze . --exclude-role test,resource,lockfile,generated
 cochange analyze . --focus production-source   # shortcut for all four
 ```
 
-This hides files from the output; it does **not** remove them from the counts. `P(A|B)` still means what it says over the full history, and the run reports how many files each role is hiding — so switching roles on and off never silently changes the statistic under the numbers you're comparing.
+This hides files from the output; it does **not** remove them from the counts, and it does **not** move a score. `P(A|B)` still means what it says over the full history; `metrics` and `compare` compute every rate over the whole population and filter only the files they *list*; and the run reports how many files each role is hiding. So switching roles on and off changes what you see, never the statistic underneath — a hidden hub still counts against `hubFreeRate`, and a hidden hotspot still counts against `boundaryIntegrity`. Roles honour the repository's own `linguist-generated` declarations too, so `--exclude-role generated` hides what `.gitattributes` marks, not just what the file names suggest.
 
 History-reading options (`--since`, `--branch`, `--change-unit`, …) apply **per command** — each one re-reads the Git log — so pass the same `--since` to every command to compare like with like. With no `--since` the whole history is used, and the run says so in its banner.
 

@@ -42,7 +42,7 @@ class AnalysisContext(
 ) {
     /** True when [path]'s role was excluded, so it should not be shown or reported on. */
     fun isHidden(path: String): Boolean =
-        excludedRoles.isNotEmpty() && FileRole.of(path) in excludedRoles
+        excludedRoles.isNotEmpty() && FileRole.of(path, generated) in excludedRoles
 
     /** A file worth showing: still present at HEAD, and not hidden by an excluded role. */
     fun isVisible(path: String): Boolean = path in headFiles && !isHidden(path)
@@ -58,7 +58,7 @@ class AnalysisContext(
     /** How many analyzed files each excluded role is hiding, for the "and here's what you're not seeing" line. */
     val hiddenByRole: Map<String, Int> by lazy {
         if (excludedRoles.isEmpty()) emptyMap() else analyzedFiles
-            .groupingBy { FileRole.of(it) }.eachCount()
+            .groupingBy { FileRole.of(it, generated) }.eachCount()
             .filterKeys { it in excludedRoles }
     }
 
@@ -154,11 +154,18 @@ class AnalysisContext(
         HubStats(multiFileChanges, participation, partnerModules)
     }
 
-    /** Files meeting the hub predicate: visible, declared, busy enough, and spread wide enough. */
+    /**
+     * Files meeting the hub predicate: declared, busy enough, spread wide enough.
+     *
+     * Deliberately NOT filtered by [isVisible]. `--exclude-role` is documented as a view
+     * filter that never shifts a number, and hiding a hub from this set raised
+     * `hubFreeRate` — the rate must be computed over the whole population. Callers that
+     * *display* files filter for visibility themselves.
+     */
     fun hubFiles(minParticipation: Int, minModuleSpread: Int): List<String> =
         hubStats.participation
             .filter { (file, count) ->
-                isVisible(file) && moduleIsDeclared(file) && count >= minParticipation &&
+                moduleIsDeclared(file) && count >= minParticipation &&
                     (hubStats.partnerModules[file]?.size ?: 0) >= minModuleSpread
             }
             .keys

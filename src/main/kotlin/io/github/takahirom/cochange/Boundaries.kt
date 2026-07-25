@@ -57,24 +57,29 @@ class Boundaries(headFiles: Set<String>, moduleRootGlobs: List<String> = emptyLi
      * may well be first-party code, and rejecting it by name alone would silently drop it
      * from every module claim.
      */
-    private val vendorIsThirdParty: Boolean = headFiles.any {
-        it == "vendor/modules.txt" || it.endsWith("/vendor/modules.txt")
+    private val vendoredTrees: Set<String> = headFiles
+        .filter { it == "vendor/modules.txt" || it.endsWith("/vendor/modules.txt") }
+        .map { it.removeSuffix("/modules.txt") }
+        .toSet()
+
+    /**
+     * The excluded tree a path sits inside, or null. Unambiguous directory names count
+     * anywhere; `vendor` counts only for the specific tree whose own `vendor/modules.txt`
+     * proves it, so one Go service's vendored dependencies cannot condemn an unrelated
+     * first-party `apps/vendor/`.
+     */
+    private fun excludedTreeOf(path: String): String? {
+        val parts = path.split('/').dropLast(1)
+        var prefix = ""
+        for (part in parts) {
+            prefix = if (prefix.isEmpty()) part else "$prefix/$part"
+            if (part in NOT_OUR_STRUCTURE) return prefix
+            if (part == "vendor" && prefix in vendoredTrees) return prefix
+        }
+        return null
     }
 
-    private fun notOurStructureElements(): Set<String> =
-        if (vendorIsThirdParty) NOT_OUR_STRUCTURE + "vendor" else NOT_OUR_STRUCTURE
-
-    private fun isNotOurStructure(path: String): Boolean {
-        val excluded = notOurStructureElements()
-        return path.split('/').dropLast(1).any { it in excluded }
-    }
-
-    private fun vendorRootOf(path: String): String {
-        val excluded = notOurStructureElements()
-        val parts = path.split('/')
-        val i = parts.indexOfFirst { it in excluded }
-        return parts.take(i + 1).joinToString("/")
-    }
+    private fun isNotOurStructure(path: String): Boolean = excludedTreeOf(path) != null
 
     private companion object {
         /** Sources whose roots cover one directory and one language, not a subtree. */
@@ -213,25 +218,28 @@ class Boundaries(headFiles: Set<String>, moduleRootGlobs: List<String> = emptyLi
         // (node_modules/pkg/package.json), so letting roots match first turned every
         // vendored package into a declared module of this repository — and a broad
         // `--module-root 'apps/*'` swallowed the dependencies underneath it.
+        val excludedTree = excludedTreeOf(path)
+        // An explicit --module-root is authoritative over its whole subtree — but only
+        // over an excluded tree it actually points at or into. A broad
+        // `--module-root 'apps/*'` must not silently adopt `apps/a/node_modules/...`,
+        // while `--module-root 'vendor/x'` is exactly how a user says "analyse this".
+        val explicit = moduleRoots.firstOrNull { (r, src) ->
+            src == ModuleSource.USER_GLOB && covers(r, src, path, dir) &&
+                (excludedTree == null || r == excludedTree || r.startsWith("$excludedTree/"))
+        }
         val notOurs = when {
-            isNotOurStructure(path) -> vendorRootOf(path) to ModuleSource.NOT_OUR_CODE
+            excludedTree != null -> excludedTree to ModuleSource.NOT_OUR_CODE
             // A Go file the go command itself skips must not be claimed by a build root
             // either: paired against a real package it looks like two declared modules.
             path.endsWith(".go") && isGoIgnored(path) ->
                 path.substringBeforeLast('/', "<root>") to ModuleSource.NOT_OUR_CODE
             else -> null
         }
-        // An exact --module-root is still authoritative, so a genuinely first-party
-        // directory that happens to be called `vendor` can be declared explicitly.
-        val explicit = moduleRoots.firstOrNull { (r, src) ->
-            src == ModuleSource.USER_GLOB && r == dir && covers(r, src, path, dir)
-        }
         // Nearest root wins, and an explicit --module-root outranks a language default:
         // `--module-root 'internal/*'` means internal/a is the module, and the Go packages
         // nested inside it must not subdivide it further.
         val root = explicit
             ?: notOurs?.let { return@getOrPut it }
-            ?: moduleRoots.firstOrNull { (r, src) -> src == ModuleSource.USER_GLOB && covers(r, src, path, dir) }
             ?: moduleRoots.firstOrNull { (r, src) -> covers(r, src, path, dir) }
         when {
             root != null -> (if (root.first.isEmpty()) "<root>" else root.first) to root.second

@@ -74,14 +74,16 @@ object CouplingKind {
         return when (ext) {
             "kt", "kts", "java" -> "jvm"
             "swift" -> "swift"
-            "m", "mm" -> "objc"
+            // C, C++, Objective-C and their shared headers are one native family: a
+            // foo.c / foo.h or foo.mm / foo.h pair is a companion, not a platform boundary.
+            "c", "h", "hh" -> "native"
             "ts", "tsx", "js", "jsx" -> "js"
             "py", "pyi" -> "py"
             "go" -> "go"
             "rs" -> "rust"
             "dart" -> "dart"
             "rb" -> "ruby"
-            "cpp", "cc", "cxx", "hpp", "hxx" -> "cpp"
+            "cpp", "cc", "cxx", "hpp", "hxx", "m", "mm" -> "native"
             else -> ext.ifEmpty { "?" }
         }
     }
@@ -116,7 +118,15 @@ object CouplingKind {
         val cb = FileCategory.of(b)
         fun bothAre(c: String) = ca == c && cb == c
         fun eitherIs(c: String) = ca == c || cb == c
-        val bothSource = bothAre(FileCategory.SOURCE)
+        // "Code" is narrower than FileCategory.SOURCE, which is its default bucket: a
+        // localized strings.xml lands in SOURCE but is a resource, and calling a pair of
+        // translations "parallel implementations, check for duplicated logic" was exactly
+        // the false positive the variant-set rule exists to prevent. FileRole knows.
+        fun isCode(path: String, category: String) =
+            category == FileCategory.SOURCE && FileRole.of(path) == FileRole.SOURCE
+        val aIsCode = isCode(a, ca)
+        val bIsCode = isCode(b, cb)
+        val bothSource = aIsCode && bIsCode
         return when {
             category == FileCategory.GENERATED -> Estimate(
                 "generated", "none",
@@ -125,7 +135,7 @@ object CouplingKind {
             // A variant set is DECLARATIVE files sharing one name under sibling
             // directories: per-crate Cargo.toml bumped by one release, per-locale
             // strings.xml translated together. Neither side may be source.
-            siblingVariants(a, b) && !eitherIs(FileCategory.SOURCE) -> Estimate(
+            siblingVariants(a, b) && !aIsCode && !bIsCode -> Estimate(
                 "variant-set", "none",
                 "the same file name under sibling directories, declarative on both sides — a variant or lockstep set (coordinated version bumps, translations, per-target manifests). The coupling is the process, not an architectural boundary problem.",
             )
@@ -143,22 +153,26 @@ object CouplingKind {
                 "build-wiring", "low",
                 "both files are build definitions — adding a dependency or bumping a version routinely touches several of them at once. Still worth reading as a boundary signal, but cheap to act on and partly inherent to the build system.",
             )
-            eitherIs(FileCategory.BUILD) && eitherIs(FileCategory.SOURCE) -> Estimate(
+            eitherIs(FileCategory.BUILD) && (aIsCode || bIsCode) -> Estimate(
                 "manifest-and-source", "low",
                 "one side is a build definition and the other the code it declares — a dependency or entry point registered alongside its implementation. Cheap to act on; not a cross-platform design coupling.",
             )
-            // Whatever is left with a declarative side is a settings/declaration coupling:
-            // a manifest with a CI file, a config with the code that reads it. Cheap, and
-            // in particular NOT a language boundary, whatever the extensions say.
+            // Neither side is code: two declarations kept in step (a config and the CI
+            // file beside it, a manifest and a deployment descriptor).
+            !aIsCode && !bIsCode -> Estimate(
+                "declarative-pair", "low",
+                "neither side is code — two declarations kept in step, such as a config file and the deployment or CI descriptor beside it. Cheap to act on, and not a design coupling across languages even when the file types differ.",
+            )
+            // One declaration, one implementation.
             !bothSource -> Estimate(
                 "declaration-and-code", "low",
-                "at least one side is configuration or a build definition rather than code — a setting declared next to whatever consumes it. Cheap to act on, and not a design coupling across languages even when the file types differ.",
+                "one side is configuration or a resource rather than code — a setting or asset declared next to whatever consumes it. Cheap to act on, and not a design coupling across languages even when the file types differ.",
             )
-            // From here both sides are source, so a language difference is a real
-            // platform boundary. Before companion: two platform-parallel files often
-            // share a name (Screen.kt / Screen.swift), which is the expensive coupling,
-            // not a cheap companion. Unknown extensions compare by their raw extension,
-            // so an unrecognized pair (Foo.kt / Foo.php) is not understated.
+            // From here both sides ARE code, so a language difference is a real platform
+            // boundary. Before companion: two platform-parallel files often share a name
+            // (Screen.kt / Screen.swift), which is the expensive coupling, not a cheap
+            // companion. Unknown extensions compare by their raw extension, so an
+            // unrecognized pair (Foo.kt / Foo.php) is not understated.
             langKey(a) != langKey(b) -> Estimate(
                 "cross-language", "high",
                 "both sides are code, in different languages (${langKey(a)} vs ${langKey(b)}) — a design coupling across a platform boundary is expensive to break; weigh it against the impact before committing.",
@@ -326,6 +340,9 @@ class UnstableHubDetector(
         val partnerModules = stats.partnerModules
 
         return context.hubFiles(minParticipation, minModuleSpread).asSequence()
+            // The predicate is unfiltered so rates stay stable; a hidden role is dropped
+            // here, where we are choosing what to SHOW.
+            .filter { context.isVisible(it) }
             .map { it to participation.getValue(it) }
             .sortedByDescending { (file, count) -> count.toLong() * partnerModules.getValue(file).size }
             .toList()

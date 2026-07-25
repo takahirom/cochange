@@ -107,12 +107,14 @@ object FileCategory {
         "pom.xml", "package.json", "package-lock.json", "cargo.toml", "go.mod", "go.sum",
         "gemfile", "makefile", "dockerfile",
         "pyproject.toml", "setup.py", "cmakelists.txt", "mix.exs", "build.bazel", "build",
+        "package.swift",
     )
 
     /** The subset that marks a directory as a module root, in their on-disk spelling. */
     val moduleRootFileNames = setOf(
         "build.gradle", "build.gradle.kts", "package.json", "Cargo.toml", "go.mod", "pom.xml",
         "BUILD.bazel", "BUILD", "pyproject.toml", "setup.py", "CMakeLists.txt", "mix.exs",
+        "Package.swift",
     )
     private val configExtensions = setOf("yml", "yaml", "json", "properties", "toml", "cfg", "ini")
 
@@ -314,10 +316,16 @@ data class AnalysisResult(
      * broken window is indistinguishable from a clean repository otherwise.
      */
     val warnings: List<AnalysisWarning> = emptyList(),
-) {
-    /** Detector types this schema version knows about — used to tell "none ran" from "none found". */
-    val detectorTypes: Set<String> get() = setOf("boundary_mismatch", "unstable_hub", "split_candidate")
-}
+    /**
+     * Every detector type this version can produce, serialized so a consumer never has to
+     * hard-code the roster to tell "this type found nothing" from "this type did not run".
+     * Compare against [skippedDetectors].
+     */
+    val detectorTypes: List<String> = DETECTOR_TYPES,
+)
+
+/** The complete detector roster, published in every result. */
+val DETECTOR_TYPES = listOf("boundary_mismatch", "unstable_hub", "split_candidate")
 
 /**
  * Version 2 renamed nothing silently: `confidence` is now documented per detector
