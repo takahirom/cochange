@@ -86,7 +86,14 @@ $ cochange analyze conference-app-2025
 change unit: merge (auto: merge-based history (94% of mainline commits are merges,
   ~4.8 commits per merge))
 
-Analyzed 381 commits as 381 change units (unit: merge) in 0.6s
+Analyzed 381 commits as 381 change units (unit: merge) in 0.5s
+
+# what the findings below rest on — here, real module roots, so nothing is withheld
+module detection [derived]: nearest directory with a build file, SwiftPM
+  Sources/Tests target directory, repository root (build file at top level)
+  coverage: 100% of 850 files under a declared module root (34 modules, trust=declared)
+
+Review candidates (12) — heuristic interpretations of the co-change evidence
 
 # a boundary the code ignores — and how costly it is to fix (effort)
 finding-1 [boundary_mismatch/source] impact=medium effort=medium confidence=1.0
@@ -95,53 +102,61 @@ finding-1 [boundary_mismatch/source] impact=medium effort=medium confidence=1.0
   5 of 5 changes to AndroidAppGraph.kt also changed App.kt (100%),
   despite living in different modules (app-android vs app-shared).
 
-  ... 5 more boundary mismatches ...
+  ... 5 more boundary mismatches, incl. a Swift pair across two iOS targets ...
 
 # one file everything drags in
-finding-7 [unstable_hub/source] impact=high confidence=0.4
+finding-7 [unstable_hub/source] impact=high confidence=0.08
   KaigiAppUi.androidJvm.kt participated in 8% of multi-file changes,
   spanning 20 other modules
 
 # one file doing two unrelated jobs — with the split lines
-finding-8 [split_candidate/source] impact=medium confidence=0.56
+finding-8 [split_candidate/source] impact=medium confidence=0.9
   KaigiAppUi.ios.kt belongs to 2 independent change clusters
-  ...co-changes with 5 files in 2 groups with no co-change between them:
+  ...co-changes with 5 files that fall into 2 groups with fewer than 3
+  co-changes between any two members of different groups:
   group 1 (3 files): AboutTabRoute.kt, AboutNavGraph.kt, AboutNavExtension.kt;
   group 2 (2 files): libs.versions.toml, KaigiAppUi.androidJvm.kt.
 ```
+
+`confidence` is each type's own ratio: for `boundary_mismatch` P(other | rarer), for `unstable_hub` the share of multi-file changes the file was dragged into, for `split_candidate` the share of its own changes that involved a group. Use `--json` when you need the sample-corrected strength rather than the ratio.
 
 `clusters` groups strongly co-changing files into the codebase's de-facto change units. It prints one headline per cluster; the full file list is one `--show` away, so a big monolith stays readable:
 
 ```text
 $ cochange clusters conference-app-2025 --min-support 5 --category source
-cluster 1: 8 files across 1 module (feature/sessions), 14 strong pairs (pair-support volume 81)
-  strongest pair: strings.xml x strings.xml (7 together, jaccard 0.88)
+edge thresholds: min-support=5 min-jaccard=0.25
+collapsed 1 synchronized sibling family (e.g. strings.xml across 2) — use --no-collapse to expand
+
+cluster 1: 7 files across 1 module (feature/sessions), 12 strong pairs (pair-support volume 69)
+  strongest pair: TimetableItemDetailScreen.kt x TimetableItemDetailFloatingMenu.kt (7 together, jaccard 0.39)
 cluster 2: 4 files across 1 module (app-shared), 6 strong pairs (pair-support volume 36)
-  strongest pair: KaigiAppUi.ios.kt x AboutNavExtension.kt (6 together, jaccard 0.60)
+  strongest pair: AboutNavExtension.kt x AboutNavGraph.kt (6 together, jaccard 0.86)
 ...
 cluster 4: 4 files across 3 modules, 6 strong pairs (pair-support volume 30)
-  strongest pair: App.kt x AndroidAppGraph.kt (5 together, jaccard 0.83)
+  strongest pair: AndroidAppGraph.kt x JvmAppGraph.kt (5 together, jaccard 1.00)
 
 Next: cochange clusters conference-app-2025 --show 1 --min-support 5 --min-jaccard 0.25 --category source
 ```
+
+Note the `collapsed 1 synchronized sibling family` line: `strings.xml` across two locale directories always moves as a set, so it counts as one node instead of topping the list as its own "coupling". That's learned from this repository's history — no locale or ecosystem list is built in.
 
 Each headline recommends the exact command to expand it. `--show N` opens one cluster — here cluster 4, the Kotlin Multiplatform entry points spread across three modules but always changed in lockstep:
 
 ```text
 $ cochange clusters conference-app-2025 --min-support 5 --category source --show 4
 cluster 4: 4 files, 6 strong pairs (pair-support volume 30)
-  app-android/.../App.kt (6 changes, app-android)
   app-shared/src/androidMain/.../AndroidAppGraph.kt (5 changes, app-shared)
   app-shared/src/jvmMain/.../JvmAppGraph.kt (5 changes, app-shared)
+  app-android/.../App.kt (6 changes, app-android)
   app-desktop/.../Main.kt (9 changes, app-desktop)
-  strongest pair: App.kt x AndroidAppGraph.kt (5 together, jaccard 0.83)
+  strongest pair: AndroidAppGraph.kt x JvmAppGraph.kt (5 together, jaccard 1.00)
 ```
 
-Each cluster is a real change unit the module structure doesn't show: the session-detail screen with its translated strings (cluster 1), and the KMP entry points above (cluster 4).
+Each cluster is a real change unit the module structure doesn't show: the session-detail screen and its floating menu (cluster 1), and the KMP entry points above (cluster 4).
 
 Synchronized sibling files (e.g. `values/strings.xml` + `values-ja/strings.xml` + … — same basename, sibling directories, one module, that history shows always move together) are collapsed into a single node so a translation or variant set can't dominate a cluster or manufacture a hub. The family is learned from the repo, not from a locale/ecosystem list, and only collapsed when the co-change actually confirms it. Raw pairs are untouched; `--no-collapse` expands them.
 
-`inspect` returns JSON with observation / interpretations / counterSignals / supportingChanges (commit hashes), giving an AI a concrete starting point before it reads any code. For `split_candidate` it also returns `groups` — each independent partner cluster in full, with its `support` and `activeFrom`/`activeTo` dates, so you can tell "two responsibilities" apart from "old vs new era of one".
+`inspect` returns JSON with observation / interpretations / counterSignals / supportingChanges (commit hashes), giving an AI a concrete starting point before it reads any code. For `split_candidate` it also returns `groups` — each independent partner cluster in full, with its `support` (change units where the candidate moved with that group) and `firstSeen`/`lastSeen` dates, so you can tell "two responsibilities" apart from "old vs new era of one". Those dates are bounds, not a continuous interval.
 
 `metrics` condenses the whole analysis into a few higher-is-better scores plus a one-line reading of what to do next — meant to be trended within one repo (same options, `--json`) rather than compared across repos:
 
@@ -168,7 +183,8 @@ reading: 13.1 effective modules x 29% adjusted locality — rich structure, freq
 
 ```text
 $ cochange compare conference-app-2025 --baseline 2025-06-01 --recent 2025-08-20 --category source
-baseline: 2025-06-01 (381 units)   recent: 2025-08-20 (222 units)   category: source
+baseline: 2025-06-01 (244 multi-file of 381 units)   recent: 2025-08-20 (128 multi-file of 220 units)   category: source
+summary: 69 heating, 145 cooling, mean shift 0.9pp per listed file (214 files at --min-count 3)
 
 heating up — larger share of changes recently:
   .../profile/ProfileCardScreen.kt                 2% ->  4%   (baseline 5, recent 5)
@@ -181,7 +197,7 @@ cooling down — was more central, quieter lately:
 
 Each rate is the file's share of that window's multi-file changes. `--baseline`/`--recent` take `30d`-style shorthand or any git `--since` expression (including absolute dates).
 
-For a weekly cadence, `compare --json` (and `metrics --json`) give machine-readable output. `compare --json` includes a summary — `heating`, `cooling`, and `totalAbsShift` (the summed change in participation share) — plus every mover, so you can track a single "how much moved this week" number over time.
+For a weekly cadence, `compare --json` (and `metrics --json`) give machine-readable output. `compare --json` includes `heating`, `cooling`, and `meanAbsShift` (per-listed-file mean change in participation share) plus every mover, so you can track a single "how much moved this week" number over time. Trend `meanAbsShift`, not `totalAbsShift` — the latter grows with how many files clear `--min-count`. Both windows also report their resolved start and their multi-file denominator, and `windowsOverlap` flags the usual `--baseline 180d --recent 30d` case where the two samples aren't independent.
 
 ## How it works
 

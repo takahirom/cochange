@@ -375,26 +375,38 @@ class CompareCommand : CliktCommand(
         val baseCtx = baseSetup.context
         val recentCtx = recentSetup.context
 
-        val moves = Compare.of(baseCtx, recentCtx, minCount)
+        val computed = Compare.of(baseCtx, recentCtx, minCount)
+        val moves = computed.moves
             .filter { category == null || recentCtx.categoryOf(it.file) == category || baseCtx.categoryOf(it.file) == category }
+
+        // Report the denominator the rates were actually divided by (multi-file units),
+        // alongside each window's total activity — printing only the latter next to a
+        // percentage made every line look like it didn't add up.
+        val baseWindow = Compare.Window(baseline, baseSetup.resolvedOptions.since, baseCtx.changes.size, computed.baselineMultiFile)
+        val recentWindow = Compare.Window(recent, recentSetup.resolvedOptions.since, recentCtx.changes.size, computed.recentMultiFile)
 
         if (asJson) {
             echo(Compare.encode(
-                repo = repo.path, branch = history.branch ?: "HEAD", baseline = baseline, recent = recent,
-                baselineUnits = baseCtx.changes.size, recentUnits = recentCtx.changes.size, category = category, moves = moves,
+                repo = repo.path, branch = history.branch ?: "HEAD", shallow = baseSetup.shallow,
+                minCount = minCount, category = category,
+                baseline = baseWindow, recent = recentWindow,
+                comparison = computed.copy(moves = moves),
             ))
             return
         }
 
         if (baseSetup.shallow) echo("WARNING: shallow clone — windows are truncated, so the comparison is biased.", err = true)
-        echo("baseline: $baseline (${baseCtx.changes.size} units)   recent: $recent (${recentCtx.changes.size} units)" +
+        echo("baseline: $baseline (${baseWindow.multiFileChanges} multi-file of ${baseWindow.logicalChanges} units)   " +
+            "recent: $recent (${recentWindow.multiFileChanges} multi-file of ${recentWindow.logicalChanges} units)" +
             if (category != null) "   category: $category" else "")
         if (moves.isEmpty()) {
             echo("No files reached --min-count ($minCount) in either window. Widen the windows or lower --min-count.")
             return
         }
         val summary = Compare.summarize(moves)
-        echo("summary: ${summary.heating} heating, ${summary.cooling} cooling, total participation shift ${"%.0f".format(summary.totalAbsShift * 100)}%")
+        echo("summary: ${summary.heating} heating, ${summary.cooling} cooling, " +
+            "mean shift ${"%.1f".format(summary.meanAbsShift * 100)}pp per listed file " +
+            "(${moves.size} files at --min-count $minCount)")
 
         fun pct(v: Double) = "%3.0f%%".format(v * 100)
         fun line(m: Compare.Move) = "  " + m.file.padEnd(52) +
