@@ -173,9 +173,10 @@ class CompareWarningsTest {
         val json = CompareCommand().test(args + "--json")
         assertEquals(0, json.statusCode, json.output)
         val report = Json.decodeFromString(Compare.CompareReport.serializer(), json.stdout)
-        assertTrue(
-            report.context.warnings.any { it.code == AnalysisWarning.WINDOW_IS_NOW },
-            "warnings were ${report.context.warnings.map { it.code }}",
+        val warning = report.context.warnings.single { it.code == AnalysisWarning.WINDOW_IS_NOW }
+        assertEquals(
+            "recent", warning.scope,
+            "two malformed windows share one code, so which window broke must be a field, not prose",
         )
     }
 

@@ -222,6 +222,15 @@ data class FindingDetail(
 @Serializable
 data class SupportingChange(
     val hashes: List<String>,
+    /**
+     * The finding's own files this unit touched, recorded at analysis time.
+     *
+     * It cannot be rebuilt later from `git show`: the log is read with `-M`, so a file
+     * renamed *after* this commit is stored under its current path while the commit
+     * itself still names the old one. Reconstructing from churn therefore dropped
+     * exactly the files a rename had moved.
+     */
+    val filesTouched: List<String> = emptyList(),
     val tier: String = EvidenceTier.EVIDENCE,
 )
 

@@ -121,7 +121,9 @@ class SplitCandidateDetector(
                     counterSignals = listOf(
                         "Groups can also reflect eras (an old and a new caller generation) or platform variants rather than separable responsibilities — check whether the groups are alive at the same time.",
                     ),
-                    supportingChanges = context.sampleChanges(setOf(file)),
+                    supportingChanges = context.sampleChangesTouching(
+                        file, (listOf(file) + c.components.flatten()).toSet(),
+                    ),
                     metrics = mapOf(
                         "independentGroups" to c.components.size.toString(),
                         "partners" to c.components.sumOf { it.size }.toString(),

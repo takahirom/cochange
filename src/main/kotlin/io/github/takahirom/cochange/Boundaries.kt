@@ -14,6 +14,7 @@ enum class ModuleSource(val declared: Boolean, val label: String) {
     PYTHON_PACKAGE(true, "Python package directory (__init__.py)"),
     USER_GLOB(true, "--module-root glob"),
     ROOT_BUILD_FILE(true, "repository root (build file at top level)"),
+    NOT_OUR_CODE(false, "vendored or fixture directory (not this repository's structure)"),
     TOP_LEVEL_DIR(false, "top-level directory (guessed — no build file covers this path)"),
     UNRESOLVED(false, "repository root (guessed — no module roots detected at all)"),
 }
@@ -53,6 +54,24 @@ class Boundaries(headFiles: Set<String>, moduleRootGlobs: List<String> = emptyLi
     private companion object {
         /** Sources whose roots cover one directory and one language, not a subtree. */
         val LANGUAGE_PACKAGE_SOURCES = setOf(ModuleSource.GO_PACKAGE, ModuleSource.PYTHON_PACKAGE)
+
+        /** Extensions a Python package claims. `.pyi` is Python; a stub is not a module of its own. */
+        val PYTHON_EXTENSIONS = setOf(".py", ".pyi")
+
+        /**
+         * Third-party code and test fixtures. Their internal layout is not this
+         * repository's module structure, so cochange must not claim declared provenance
+         * for it — a vendored dependency bump would otherwise read as cross-module churn.
+         */
+        val NOT_OUR_STRUCTURE = setOf("vendor", "testdata", "node_modules", "third_party")
+
+        fun isNotOurStructure(path: String) =
+            path.split('/').dropLast(1).any { it in NOT_OUR_STRUCTURE }
+
+        /** Paths the go command itself skips: `_`/`.` prefixed elements, and ignored directories. */
+        fun isGoIgnored(path: String): Boolean = path.split('/').any {
+            it in NOT_OUR_STRUCTURE || it.startsWith("_") || it.startsWith(".")
+        }
     }
 
     // A deliberately thin list of common cases — not a catalog of every build
@@ -94,16 +113,13 @@ class Boundaries(headFiles: Set<String>, moduleRootGlobs: List<String> = emptyLi
         // is withheld — while the language's own unit, the package, is "the directory".
         // Python says the same thing with __init__.py. These are language rules, not
         // guesses about a layout, which is why they count as declared.
-        // The go command ignores directories named testdata or vendor, and any path
-        // element starting with "_" or "." — a fixture directory is not a package, and
-        // two synchronized fixture (or vendored dependency) updates must not become a
-        // boundary finding between "modules".
-        fun goIgnored(dir: String) = dir.split('/')
-            .any { it == "testdata" || it == "vendor" || it.startsWith("_") || it.startsWith(".") }
+        // The go command ignores directories named testdata or vendor, any path element
+        // starting with "_" or ".", and FILES whose names start with those characters.
+        // A directory of fixtures is not a package, so two synchronized fixture updates
+        // must not read as two modules changing together.
         val fromGoPackages = headFiles
-            .filter { it.endsWith(".go") }
+            .filter { it.endsWith(".go") && !isGoIgnored(it) }
             .map { it.substringBeforeLast('/', "") }
-            .filterNot(::goIgnored)
         val fromPythonPackages = headFiles
             .filter { it.substringAfterLast('/') == "__init__.py" }
             .map { it.substringBeforeLast('/', "") }
@@ -150,9 +166,17 @@ class Boundaries(headFiles: Set<String>, moduleRootGlobs: List<String> = emptyLi
      * Go and Python packages are per-directory, never recursive, and a shell script
      * sitting in a Go package directory is not part of that package.
      */
+    /** The vendor/testdata directory a path sits under, so all of it is one bucket. */
+    private fun vendorRootOf(path: String): String {
+        val parts = path.split('/')
+        val i = parts.indexOfFirst { it in NOT_OUR_STRUCTURE }
+        return parts.take(i + 1).joinToString("/")
+    }
+
     private fun covers(root: String, source: ModuleSource, path: String, dir: String): Boolean = when (source) {
-        ModuleSource.GO_PACKAGE -> dir == root && path.endsWith(".go")
-        ModuleSource.PYTHON_PACKAGE -> dir == root && path.endsWith(".py")
+        ModuleSource.GO_PACKAGE -> dir == root && path.endsWith(".go") && !isGoIgnored(path)
+        ModuleSource.PYTHON_PACKAGE ->
+            dir == root && PYTHON_EXTENSIONS.any { path.endsWith(it) }
         else -> root.isNotEmpty() && (dir == root || dir.startsWith("$root/"))
     }
 
@@ -166,6 +190,16 @@ class Boundaries(headFiles: Set<String>, moduleRootGlobs: List<String> = emptyLi
         } ?: moduleRoots.firstOrNull { (r, src) -> covers(r, src, path, dir) }
         when {
             root != null -> (if (root.first.isEmpty()) "<root>" else root.first) to root.second
+            // Vendored code and fixtures: not this repository's structure, so they get an
+            // undeclared module of their own rather than inheriting the root module's
+            // provenance. Otherwise a vendored file and a first-party package looked like
+            // two declared modules changing together.
+            isNotOurStructure(path) -> vendorRootOf(path) to ModuleSource.NOT_OUR_CODE
+            // A Go file the go command itself skips (an "_ignored" or ".hidden" element)
+            // must not inherit the root module's provenance either: paired against a real
+            // package it would look like two declared modules changing together.
+            path.endsWith(".go") && isGoIgnored(path) ->
+                path.substringBeforeLast('/', "<root>") to ModuleSource.NOT_OUR_CODE
             // Single-module repo: paths not claimed by a nested module all belong
             // to the root module, not to their top-level directory.
             rootIsModule -> "<root>" to ModuleSource.ROOT_BUILD_FILE

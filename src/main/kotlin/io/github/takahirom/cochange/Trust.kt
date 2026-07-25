@@ -135,6 +135,13 @@ data class AnalysisWarning(
     /** warning | note — a warning means do not quote these numbers until it is resolved. */
     val severity: String,
     val message: String,
+    /**
+     * Which part of the run this is about, when a command sets up more than one —
+     * `compare` reports "baseline" and "recent". Empty when there is only one setup.
+     * A structured field, because two malformed windows produce the same [code] and
+     * a prose prefix is not something a consumer can branch on.
+     */
+    val scope: String = "",
 ) {
     companion object {
         const val WINDOW_IS_NOW = "window_is_now"

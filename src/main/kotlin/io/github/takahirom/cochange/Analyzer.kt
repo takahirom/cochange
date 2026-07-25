@@ -100,48 +100,61 @@ object CouplingKind {
     }
 
     /**
-     * [category] is the pair's category, which `categoryOfPair` sets from the LEAST
-     * source-like side — so a build file paired with production code is a `build` pair.
-     * Rules that describe *both* files must therefore test both files, not this.
+     * What it would cost to act on this coupling, and an honest name for what it is.
+     *
+     * [category] is the PAIR's category, which `categoryOfPair` takes from the least
+     * source-like side — so `docs/example.py` × `src/example.py` is a `docs` pair even
+     * though one endpoint is production code. Every rule below therefore asks about the
+     * endpoints it actually describes, and only rules that really are "one side is X"
+     * read [category].
      */
     fun of(a: String, b: String, category: String, namesRelated: Boolean): Estimate {
         val ka = langKey(a)
         val kb = langKey(b)
-        val bothBuild = FileCategory.of(a) == FileCategory.BUILD && FileCategory.of(b) == FileCategory.BUILD
+        val ca = FileCategory.of(a)
+        val cb = FileCategory.of(b)
+        fun bothAre(c: String) = ca == c && cb == c
+        fun eitherIs(c: String) = ca == c || cb == c
         return when {
             category == FileCategory.GENERATED -> Estimate(
                 "generated", "none",
                 "one side is generated — the coupling is inherent; fixing the source regenerates it, so this is not a refactoring target.",
             )
-            // Identical basename in sibling directories: a variant/lockstep set
-            // (per-crate Cargo.toml bumped by one release, per-locale strings.xml
-            // translated together). Calling that "interface/implementation" was simply
-            // the wrong description of the same low-surprise situation.
-            // Declarative files only. Two source files with the same name under sibling
-            // feature directories (services/orders/Router.kt, services/payments/Router.kt)
-            // are architectural peers, and possibly duplicated logic — the last thing to
-            // tell a reader is "expected, effort none".
-            siblingVariants(a, b) && category != FileCategory.SOURCE -> Estimate(
+            // A variant set is a set of DECLARATIVE files with one name under sibling
+            // directories: per-crate Cargo.toml bumped by one release, per-locale
+            // strings.xml translated together. Both endpoints must be declarative —
+            // asking the pair category let `docs/example.py` × `src/example.py` through.
+            siblingVariants(a, b) && !eitherIs(FileCategory.SOURCE) -> Estimate(
                 "variant-set", "none",
-                "the same file name under sibling directories — a variant or lockstep set (coordinated version bumps, translations, per-target manifests). The coupling is the process, not an architectural boundary problem.",
+                "the same file name under sibling directories, on both sides a declarative file — a variant or lockstep set (coordinated version bumps, translations, per-target manifests). The coupling is the process, not an architectural boundary problem.",
             )
-            // Both sides are build definitions. Adding a dependency or bumping a version
-            // routinely touches a build script and a version catalog together — that is
-            // how the build system is designed. Checked before the language rule, which
-            // otherwise reads build.gradle.kts vs libs.versions.toml as "jvm vs toml,
-            // a platform boundary that is expensive to break".
-            // One side is documentation. A changelog or a README that moves with the code
-            // it describes is documentation maintenance — and the language rule read
-            // CHANGES.rst x app.py as "rst vs py, a platform boundary expensive to break".
-            category == FileCategory.DOCS -> Estimate(
+            // Same name, sibling directories, but source on at least one side: parallel
+            // implementations of one shape per feature or service. Possibly duplicated
+            // logic, which is the opposite of "expected, nothing to do".
+            siblingVariants(a, b) -> Estimate(
+                "parallel-implementation", "medium",
+                "the same file name under sibling directories, with source on at least one side — parallel implementations of one shape per feature or service. Check for duplicated logic that belongs in a shared place, rather than assuming the coupling is expected.",
+            )
+            eitherIs(FileCategory.DOCS) -> Estimate(
                 "documentation", "low",
                 "one side is documentation — a changelog or a README moving with the code it describes is documentation maintenance, not a design coupling. Worth knowing which docs a module drags along; not a refactoring target.",
             )
-            bothBuild -> Estimate(
+            // Adding a dependency or bumping a version routinely touches a build script
+            // and a version catalog together — that is how the build system is designed.
+            // Before the language rule, which read build.gradle.kts × libs.versions.toml
+            // as "jvm vs toml, a platform boundary that is expensive to break".
+            bothAre(FileCategory.BUILD) -> Estimate(
                 "build-wiring", "low",
                 "both files are build definitions — adding a dependency or bumping a version routinely touches several of them at once. Still worth reading as a boundary signal, but cheap to act on and partly inherent to the build system.",
             )
-            // Different language keys → cross-language. Checked before companion: two
+            // One manifest, one implementation: declaring a dependency or an entry point
+            // next to the code that uses it. Also not a platform boundary, which is what
+            // the language rule would have called `web/package.json` × `server/app.py`.
+            eitherIs(FileCategory.BUILD) -> Estimate(
+                "manifest-and-source", "low",
+                "one side is a build definition and the other the code it declares — a dependency or entry point being registered alongside its implementation. Cheap to act on; not a cross-platform design coupling.",
+            )
+            // Different language keys → cross-language. Before companion: two
             // platform-parallel files often share a name (Screen.kt / Screen.swift), but
             // that is the expensive cross-platform coupling, not a cheap companion.
             // Unknown extensions compare by their raw extension, so an unrecognized
@@ -227,7 +240,9 @@ class BoundaryMismatchDetector(
                     "(${pct(reverse)}) — the coupling is one-directional, so ${name(other)} may simply be a widely shared file."
             )
             if (rarerCount < 10) add("Only $rarerCount changes to ${name(rarer)} in the analyzed period — small sample.")
-            if (CouplingKind.siblingVariants(p.a, p.b) && category != FileCategory.SOURCE) add(
+            if (CouplingKind.siblingVariants(p.a, p.b) &&
+                FileCategory.of(p.a) != FileCategory.SOURCE && FileCategory.of(p.b) != FileCategory.SOURCE
+            ) add(
                 "Same file name under sibling directories (${p.a.substringAfterLast('/')}) — a variant or lockstep " +
                     "set. Coordinated version bumps, translations and per-target manifests move together by process, " +
                     "so crossing a module boundary here is expected rather than a design problem."
@@ -302,30 +317,17 @@ class UnstableHubDetector(
 
     override fun detect(context: AnalysisContext): List<Finding> {
         // Only multi-file changes: a hub is a file dragged into *other* work.
-        val multiFileChanges = context.changes.filter { it.files.size >= 2 }
+        // The predicate lives on AnalysisContext so `metrics` reads exactly the same
+        // population — the two used to diverge while claiming to agree.
+        val stats = context.hubStats
+        val multiFileChanges = stats.multiFileChanges
         if (multiFileChanges.isEmpty()) return emptyList()
-        val boundaries = context.boundaries
+        val participation = stats.participation
+        val partnerModules = stats.partnerModules
 
-        val participation = HashMap<String, Int>()
-        val partnerModules = HashMap<String, MutableSet<String>>()
-        for (change in multiFileChanges) {
-            // Only declared modules count towards the spread: "spans 5 other modules"
-            // has to mean five boundaries the repository itself draws, not five
-            // top-level folders that happen to exist.
-            val modules = change.files.filter(context::moduleIsDeclared).map(boundaries::moduleOf).toSet()
-            for (file in change.files) {
-                participation.merge(file, 1, Int::plus)
-                partnerModules.getOrPut(file) { HashSet() }.addAll(modules - boundaries.moduleOf(file))
-            }
-        }
-
-        return participation.asSequence()
-            .filter { (file, count) ->
-                context.isVisible(file) && context.moduleIsDeclared(file) &&
-                    count >= minParticipation &&
-                    (partnerModules[file]?.size ?: 0) >= minModuleSpread
-            }
-            .sortedByDescending { (file, count) -> count.toLong() * partnerModules[file]!!.size }
+        return context.hubFiles(minParticipation, minModuleSpread).asSequence()
+            .map { it to participation.getValue(it) }
+            .sortedByDescending { (file, count) -> count.toLong() * partnerModules.getValue(file).size }
             .toList()
             // Cap per category (like boundary_mismatch) so generated/build/docs hubs
             // can't consume every slot and push source hubs out of the top findings.
@@ -335,7 +337,7 @@ class UnstableHubDetector(
             }
             .map { (file, count) ->
                 val rate = count.toDouble() / multiFileChanges.size
-                val modules = partnerModules[file]!!.size
+                val modules = partnerModules.getValue(file).size
                 Finding(
                     id = "",
                     type = type,
@@ -374,7 +376,8 @@ class UnstableHubDetector(
                             "Registration points (DI modules, navigation graphs, string resources) legitimately change with many features; the question is whether the churn is additive-only or structural.",
                         ),
                         supportingChanges = multiFileChanges.asSequence()
-                            .filter { file in it.files }.take(10).map { SupportingChange(it.hashes) }.toList(),
+                            .filter { file in it.files }.take(10)
+                            .map { SupportingChange(it.hashes, listOf(file)) }.toList(),
                         metrics = mapOf(
                             "participation" to count.toString(),
                             "multiFileChanges" to multiFileChanges.size.toString(),

@@ -311,6 +311,22 @@ class BuildWiringEffortTest {
     }
 
     @Test
+    fun `a docs-categorised pair with a source endpoint is not a variant set`() {
+        // categoryOfPair calls this pair "docs", and the two share a basename under
+        // sibling directories — but src/example.py is production code, so "declarative
+        // variant set, nothing to do" is false of it.
+        val estimate = CouplingKind.of("docs/example.py", "src/example.py", FileCategory.DOCS, namesRelated = true)
+        assertTrue(estimate.kind != "variant-set", "was ${estimate.kind}")
+    }
+
+    @Test
+    fun `a manifest paired with the code it declares is cheap, not a platform boundary`() {
+        val estimate = CouplingKind.of("web/package.json", "server/app.py", FileCategory.BUILD, namesRelated = false)
+        assertEquals("manifest-and-source", estimate.kind)
+        assertEquals("low", estimate.effort)
+    }
+
+    @Test
     fun `same-named source peers under sibling directories are not a variant set`() {
         // services/orders/Router.kt and services/payments/Router.kt are architectural
         // peers, possibly duplicated logic. "Expected, effort none" is the wrong verdict.
@@ -319,8 +335,9 @@ class BuildWiringEffortTest {
             "services/orders/Router.kt", "services/payments/Router.kt",
             FileCategory.SOURCE, namesRelated = true,
         )
-        assertTrue(estimate.kind != "variant-set", "was ${estimate.kind}")
-        assertTrue(estimate.effort != "none", "a possible duplication must not be costed at zero")
+        assertEquals("parallel-implementation", estimate.kind, "possible duplication, not a companion pair")
+        assertEquals("medium", estimate.effort)
+        assertTrue("duplicated logic" in estimate.note, estimate.note)
     }
 
     @Test
@@ -365,14 +382,16 @@ class LanguagePackagePrecisionTest {
         // The fixtures are not packages of their own, so they all fall back to the module
         // go.mod declares. Two synchronized fixture updates therefore cross no boundary —
         // which is the point: they used to look like two modules changing together.
-        val fixtures = listOf("parser/testdata/good/input.go", "parser/testdata/bad/input.go", "parser/_ignored/x.go")
+        val fixtures = listOf(
+            "parser/testdata/good/input.go", "parser/testdata/bad/input.go",
+            "parser/_ignored/x.go", "parser/.hidden/y.go",
+        )
         for (fixture in fixtures) {
-            assertTrue(
-                boundaries.sourceOf(fixture) != ModuleSource.GO_PACKAGE,
-                "$fixture is not a Go package: got ${boundaries.sourceOf(fixture)}",
+            assertFalse(
+                boundaries.sourceOf(fixture).declared,
+                "$fixture is not part of this repository's structure: got ${boundaries.sourceOf(fixture)}",
             )
         }
-        assertEquals(1, fixtures.map(boundaries::moduleOf).toSet().size, "no boundary between fixture directories")
     }
 
     @Test
@@ -382,13 +401,13 @@ class LanguagePackagePrecisionTest {
         val files = setOf("go.mod", "pkg/a/a.go", "vendor/github.com/x/y/y.go", "vendor/modules.txt")
         val boundaries = Boundaries(files)
         assertEquals(ModuleSource.GO_PACKAGE, boundaries.sourceOf("pkg/a/a.go"))
-        assertTrue(
-            boundaries.sourceOf("vendor/github.com/x/y/y.go") != ModuleSource.GO_PACKAGE,
-            "got ${boundaries.sourceOf("vendor/github.com/x/y/y.go")}",
+        assertFalse(
+            boundaries.sourceOf("vendor/github.com/x/y/y.go").declared,
+            "vendored code is not this repository's structure: got ${boundaries.sourceOf("vendor/github.com/x/y/y.go")}",
         )
         assertEquals(
-            boundaries.moduleOf("vendor/modules.txt"), boundaries.moduleOf("vendor/github.com/x/y/y.go"),
-            "vendored files all belong to the module go.mod declares — no boundary between them",
+            "vendor", boundaries.moduleOf("vendor/github.com/x/y/y.go"),
+            "all vendored files fall into one undeclared bucket, so a dependency bump crosses no boundary",
         )
     }
 
@@ -410,6 +429,26 @@ class LanguagePackagePrecisionTest {
         assertFalse(
             boundaries.sourceOf("scripts/deploy.sh").declared,
             "got ${boundaries.sourceOf("scripts/deploy.sh")}",
+        )
+    }
+
+    @Test
+    fun `a go file the go command skips does not become a declared module`() {
+        // Paired against the real package this would otherwise read as two declared
+        // modules changing together, because it fell back to the root go.mod.
+        val files = setOf("go.mod", "parser/parse.go", "parser/_ignored/x.go")
+        val boundaries = Boundaries(files)
+        assertFalse(boundaries.sourceOf("parser/_ignored/x.go").declared)
+        assertTrue(boundaries.sourceOf("parser/parse.go").declared)
+    }
+
+    @Test
+    fun `a python stub file belongs to its package, not to the root`() {
+        val files = setOf("pyproject.toml", "pkg/__init__.py", "pkg/impl.py", "pkg/api.pyi")
+        val boundaries = Boundaries(files)
+        assertEquals(
+            boundaries.moduleOf("pkg/impl.py"), boundaries.moduleOf("pkg/api.pyi"),
+            ".pyi is Python; putting the stub in a different module invented a boundary inside one package",
         )
     }
 
@@ -464,13 +503,38 @@ class MetricsProvenanceTest {
             "legacyA/legacyB are folder names, not modules",
         )
         assertEquals(
-            withoutGuessed.multiFileUnits, withGuessed.multiFileUnits,
+            withoutGuessed.declaredMultiFileUnits, withGuessed.declaredMultiFileUnits,
             "a change touching only guessed files contributes no module evidence",
+        )
+        // ...while the raw count still reports everything, so the two denominators are
+        // visibly different rather than one silently standing in for the other.
+        assertTrue(
+            withGuessed.multiFileUnits > withGuessed.declaredMultiFileUnits,
+            "${withGuessed.multiFileUnits} vs ${withGuessed.declaredMultiFileUnits}",
         )
     }
 
     @Test
-    fun `the hub predicate matches the detector's population`() {
+    fun `metrics and the detector report the same hub set`() {
+        // Codex's case: a hub whose partners are mostly guessed. Projecting to declared
+        // files first turned those units single-file and dropped them, so metrics omitted
+        // a hub the detector reported. Both now read one shared predicate.
+        val head = setOf("app/build.gradle.kts", "app/H.kt") +
+            (1..5).map { "m$it/build.gradle.kts" } + (1..5).map { "m$it/F$it.kt" } +
+            (1..15).map { "guessed$it/X$it.txt" }
+        val changes = (1..5).map { i -> LogicalChange(listOf(commit("app/H.kt", "m$i/F$i.kt"))) } +
+            (1..15).map { i -> LogicalChange(listOf(commit("app/H.kt", "guessed$i/X$i.txt"))) }
+        val context = AnalysisContext(changes, Boundaries(head), head)
+
+        val fromDetector = Analyzer().run(context).findings
+            .filter { it.type == "unstable_hub" }.flatMap { it.subjects }.toSet()
+        val fromMetrics = Metrics.compute(context).hubFiles.toSet()
+        assertEquals(fromDetector, fromMetrics, "one predicate, one answer")
+        assertTrue("app/H.kt" in fromDetector, "20 multi-file units across 5 declared modules is a hub")
+    }
+
+    @Test
+    fun `a hub over guessed modules only is reported by neither`() {
         // A hub over guessed folders only: the detector withholds it, so metrics must
         // not list it either. Both now read the same declared-only population.
         val head = setOf("a/H.kt") + (1..8).map { "m$it/F$it.kt" }

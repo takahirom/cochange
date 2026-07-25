@@ -237,6 +237,8 @@ class ClustersCommand : CliktCommand(
                             declaredModules = cluster.files
                                 .filter { setup.context.moduleIsDeclared(it) }
                                 .map { boundaries.moduleOf(it) }.distinct().sorted(),
+                            guessedFiles = cluster.files
+                                .filterNot { setup.context.moduleIsDeclared(it) }.sorted(),
                             strongPairs = cluster.edges.size,
                             pairSupportVolume = cluster.pairSupportVolume,
                             strongest = cluster.edges.firstOrNull()
@@ -317,13 +319,14 @@ class MetricsCommand : CliktCommand(
             return
         }
         printBanner(setup, { msg, e -> echo(msg, err = e) }, compact = true)
-        echo("window: ${"%.1f".format(m.windowYears)} years  multi-file change units: ${m.multiFileUnits}  " +
+        echo("window: ${"%.1f".format(m.windowYears)} years  multi-file change units: ${m.multiFileUnits} " +
+            "(${m.declaredMultiFileUnits} within declared modules)  " +
             "effective modules: ${"%.1f".format(m.effectiveModules)} (${m.distinctModules} distinct)")
         if (m.lowResolution) {
             echo("WARNING: low-resolution module partition (effective modules < ${Metrics.LOW_RESOLUTION}) — module-based scores below are weak evidence.", err = true)
         }
         echo("")
-        echo("module locality        ${fmt(m.moduleLocality)}  (${m.localUnits}/${m.multiFileUnits} multi-file units contained in one module)")
+        echo("module locality        ${fmt(m.moduleLocality)}  (${m.localUnits}/${m.declaredMultiFileUnits} declared-module units contained in one module)")
         echo("  adjusted for chance  ${fmt(m.adjustedLocality)}  (contribution of the module structure beyond random placement — a monolith scores ~0 here)")
         echo("hub-free change rate   ${fmt(m.hubFreeRate)}  (${m.hubAvoidingUnits}/${m.multiFileUnits} units avoid the ${m.hubFiles.size} hub files)" +
             if (m.hubFreeRate == null) "  [needs >= 6 modules]" else "")
@@ -421,10 +424,11 @@ class CompareCommand : CliktCommand(
             echo(Compare.encode(
                 // Both setups' caveats: a malformed --recent resolves to now and every
                 // established file appears to cool to zero, which must not look clean.
-                context = RunContext.of(baseSetup).let {
-                    it.copy(warnings = (it.warnings + recentSetup.warnings.map { w ->
-                        w.copy(message = "recent window: ${w.message}")
-                    }).distinct())
+                context = RunContext.of(baseSetup).let { ctx ->
+                    ctx.copy(
+                        warnings = baseSetup.warnings.map { it.copy(scope = "baseline") } +
+                            recentSetup.warnings.map { it.copy(scope = "recent") },
+                    )
                 },
                 minCount = minCount, category = category,
                 baseline = baseWindow, recent = recentWindow,
@@ -440,6 +444,7 @@ class CompareCommand : CliktCommand(
                 echo("$tag ($label window): ${w.message}", err = true)
             }
         }
+        // Both windows resolve their own conditions, so a caveat belongs to one of them.
         if (recentAlone != baseSetup.changeUnitName) {
             echo(
                 "WARNING: the recent window alone would be counted as \"$recentAlone\", not " +
@@ -519,13 +524,13 @@ class Inspect : CliktCommand(
                 .associateBy { it.hash }
         }.getOrDefault(emptyMap())
         val supporting = finding.detail.supportingChanges.map { unit ->
-            val commits = unit.hashes.mapNotNull { byHash[it] }
             SupportingChangeReport(
                 hashes = unit.hashes,
-                commits = commits,
-                // Union across the unit's commits, so a two-commit author-window unit
-                // shows both sides instead of only whichever came first.
-                filesTouched = commits.flatMap { it.churn.keys }.distinct().filter { it in findingFiles }.sorted(),
+                commits = unit.hashes.mapNotNull { byHash[it] },
+                // Recorded when the analysis ran. Rebuilding it from churn was wrong for
+                // any file renamed after the commit: the log is read with -M, so the
+                // finding names the current path while the commit names the old one.
+                filesTouched = unit.filesTouched,
             )
         }
         val current = runCatching { GitLog.headCommit(repo, null) }.getOrNull()

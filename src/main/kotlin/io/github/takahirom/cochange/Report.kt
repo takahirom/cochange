@@ -113,12 +113,17 @@ data class ClusterReport(
     val files: List<String>,
     val modules: List<String>,
     /**
-     * The subset of [modules] backed by a declared root. Unlike a pair, a cluster used
-     * to publish bare module names, so a consumer could not tell `app` (a Gradle module)
-     * from `legacy` (a folder name) — and repository-wide coverage cannot answer that
-     * per cluster.
+     * The subset of [modules] backed by a declared root. A cluster used to publish bare
+     * module names, so a consumer could not tell `app` (a Gradle module) from `legacy`
+     * (a folder name), and repository-wide coverage cannot answer that per cluster.
      */
     val declaredModules: List<String>,
+    /**
+     * The cluster's files whose module was only guessed. Needed because one module label
+     * can have mixed provenance: with a root `main.go` and a `README.md` and no build
+     * file, both resolve to `<root>` while only the Go file's provenance is declared.
+     */
+    val guessedFiles: List<String>,
     val strongPairs: Int,
     /** Sum of pair supports, so a file in n pairs contributes n times — a ranking weight, not a count. */
     val pairSupportVolume: Long,
@@ -140,9 +145,9 @@ data class ClusterEdgeReport(
 )
 
 /**
- * One supporting change, readable without shelling out to git: what it was and
- * how much of it landed in the files this finding is about. Churn is empty for a
- * merge commit, which has no numstat of its own.
+ * One supporting change, readable without shelling out to git: what it was and how much
+ * of it landed in the files this finding is about. A merge commit's churn is its
+ * first-parent diff — the same thing the `merge` change unit counted.
  */
 @Serializable
 data class CommitSummary(

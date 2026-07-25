@@ -126,6 +126,45 @@ class AnalysisContext(
         }
 
     /**
+     * The hub statistics both `unstable_hub` and `metrics` read, computed once here so
+     * the two cannot drift apart — they previously used different populations while a
+     * comment claimed they shared one predicate.
+     *
+     * Participation is counted over every multi-file change unit. Only DECLARED modules
+     * count towards the spread: "spans 5 other modules" has to mean five boundaries the
+     * repository itself draws.
+     */
+    class HubStats(
+        val multiFileChanges: List<LogicalChange>,
+        val participation: Map<String, Int>,
+        val partnerModules: Map<String, Set<String>>,
+    )
+
+    val hubStats: HubStats by lazy {
+        val multiFileChanges = changes.filter { it.files.size >= 2 }
+        val participation = HashMap<String, Int>()
+        val partnerModules = HashMap<String, MutableSet<String>>()
+        for (change in multiFileChanges) {
+            val modules = change.files.filter(::moduleIsDeclared).map(boundaries::moduleOf).toSet()
+            for (file in change.files) {
+                participation.merge(file, 1, Int::plus)
+                partnerModules.getOrPut(file) { HashSet() }.addAll(modules - boundaries.moduleOf(file))
+            }
+        }
+        HubStats(multiFileChanges, participation, partnerModules)
+    }
+
+    /** Files meeting the hub predicate: visible, declared, busy enough, and spread wide enough. */
+    fun hubFiles(minParticipation: Int, minModuleSpread: Int): List<String> =
+        hubStats.participation
+            .filter { (file, count) ->
+                isVisible(file) && moduleIsDeclared(file) && count >= minParticipation &&
+                    (hubStats.partnerModules[file]?.size ?: 0) >= minModuleSpread
+            }
+            .keys
+            .sortedByDescending { hubStats.participation[it] }
+
+    /**
      * Sample change units (newest-first order of [changes]) touching all of [files],
      * each with every commit it contains — the unit, not its first commit, is what
      * the co-change evidence was counted from.
@@ -134,6 +173,14 @@ class AnalysisContext(
         changes.asSequence()
             .filter { it.files.containsAll(files) }
             .take(limit)
-            .map { SupportingChange(it.hashes) }
+            .map { unit -> SupportingChange(unit.hashes, unit.files.filter { it in files }.sorted()) }
+            .toList()
+
+    /** As [sampleChanges], but for a finding about one file among many partners. */
+    fun sampleChangesTouching(subject: String, findingFiles: Set<String>, limit: Int = 10): List<SupportingChange> =
+        changes.asSequence()
+            .filter { subject in it.files }
+            .take(limit)
+            .map { unit -> SupportingChange(unit.hashes, unit.files.filter { it in findingFiles }.sorted()) }
             .toList()
 }

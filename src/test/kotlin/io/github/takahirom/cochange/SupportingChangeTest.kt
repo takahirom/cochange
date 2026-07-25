@@ -125,3 +125,60 @@ class InspectSupportingChangeTest {
         val json = kotlinx.serialization.json.Json { ignoreUnknownKeys = true }
     }
 }
+
+/**
+ * The log is read with `-M`, so a file renamed after a commit is stored under its
+ * current path while the commit still names the old one. `filesTouched` used to be
+ * rebuilt from `git show`'s churn, which therefore dropped exactly the files a rename
+ * had moved. It is recorded when the analysis runs instead.
+ */
+class RenamedSupportingChangeTest {
+    private val repo = File.createTempFile("cochange-rename", "").apply { delete(); mkdirs() }
+
+    @AfterTest
+    fun cleanup() {
+        repo.deleteRecursively()
+    }
+
+    private fun git(vararg args: String) = GitLog.runGit(repo, args.toList())
+
+    @Test
+    fun `a file renamed later still shows in the units that predate the rename`() {
+        git("init", "-q", "-b", "main")
+        git("config", "user.email", "dev@example.com")
+        git("config", "user.name", "Dev")
+        File(repo, "app/build.gradle.kts").apply { parentFile.mkdirs() }.writeText("// app")
+        File(repo, "core/build.gradle.kts").apply { parentFile.mkdirs() }.writeText("// core")
+        // Six units editing old/A.kt together with core/B.kt...
+        repeat(6) { i ->
+            File(repo, "app/Old.kt").writeText("a$i\n".repeat(i + 1))
+            File(repo, "core/B.kt").writeText("b$i\n")
+            git("add", "-A")
+            git("-c", "commit.gpgsign=false", "commit", "-q", "-m", "change $i")
+        }
+        // ...then the file is renamed, so the analysis knows it as app/New.kt.
+        git("mv", "app/Old.kt", "app/New.kt")
+        git("-c", "commit.gpgsign=false", "commit", "-q", "-m", "Rename it")
+
+        assertEquals(0, Analyze().test(listOf(repo.path, "--change-unit", "commit", "--save", "r")).statusCode)
+        val findings = Findings().test(listOf(repo.path, "--analysis", "r", "--json"))
+        val id = Regex("\"id\"\\s*:\\s*\"(finding-\\d+)\"").find(findings.stdout)?.groupValues?.get(1)
+        assertTrue(id != null, "expected a finding about the renamed pair: ${findings.stdout.take(400)}")
+
+        val inspect = Inspect().test(listOf(id!!, repo.path, "--analysis", "r"))
+        assertEquals(0, inspect.statusCode, inspect.output)
+        val report = json.decodeFromString(InspectReport.serializer(), inspect.stdout)
+        assertTrue(report.finding.subjects.any { it.endsWith("New.kt") }, "was ${report.finding.subjects}")
+        // Every supporting unit predates the rename, and every one must still name both sides.
+        for (unit in report.supportingChanges) {
+            assertEquals(
+                report.finding.subjects.sorted(), unit.filesTouched,
+                "the pre-rename commit names app/Old.kt; the finding is about app/New.kt",
+            )
+        }
+    }
+
+    private companion object {
+        val json = kotlinx.serialization.json.Json { ignoreUnknownKeys = true }
+    }
+}

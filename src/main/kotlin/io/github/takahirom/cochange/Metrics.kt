@@ -30,7 +30,15 @@ data class RepoMetrics(
     val distinctModules: Int,
     /** True when the partition is too coarse for module-based scores to mean much. */
     val lowResolution: Boolean,
+    /** Change units touching more than one file — the denominator of [hubFreeRate]. */
     val multiFileUnits: Int,
+    /**
+     * Multi-file units after dropping files whose module was only guessed, keeping those
+     * with two declared files left. Locality and boundary integrity are shares of THIS,
+     * because a change touching one declared file and one guessed one says nothing about
+     * the module partition.
+     */
+    val declaredMultiFileUnits: Int,
     val crossModuleUnits: Int,
     val localUnits: Int,
     val hubAvoidingUnits: Int,
@@ -84,24 +92,16 @@ object Metrics {
             moduleShares.sumOf { p -> p.pow(files.size) }
         } / multiFile.size
 
-        // Hubs: the same predicate as UnstableHubDetector's defaults, over the same
-        // declared-only population — the two used to disagree about which files count.
-        val participation = HashMap<String, Int>()
-        val partnerModules = HashMap<String, MutableSet<String>>()
-        for (files in multiFile) {
-            val modules = files.map(boundaries::moduleOf).toSet()
-            for (file in files) {
-                participation.merge(file, 1, Int::plus)
-                partnerModules.getOrPut(file) { HashSet() }.addAll(modules - boundaries.moduleOf(file))
-            }
-        }
-        val hubFiles = participation.filter { (file, count) ->
-            context.isVisible(file) && count >= 20 && (partnerModules[file]?.size ?: 0) >= 5
-        }.keys.sortedByDescending { participation[it] }
+        // Hubs come from AnalysisContext, the single definition UnstableHubDetector also
+        // uses, so the two can no longer report different hub sets. Note its population
+        // is every multi-file unit — NOT the declared-projected `multiFile` above — so
+        // the hub-free rate is a share of all multi-file units.
+        val hubFiles = context.hubFiles(minParticipation = 20, minModuleSpread = 5)
+        val allMultiFile = context.hubStats.multiFileChanges
         // With < 6 modules the >= 5 partner-module predicate is unsatisfiable;
         // a perfect score there would be structural, not architectural.
         val hubsMeaningful = incidences.size >= 6
-        val hubAvoiding = multiFile.count { files -> files.none { it in hubFiles } }
+        val hubAvoiding = allMultiFile.count { change -> change.files.none { it in hubFiles } }
 
         val hotspots = context.pairs(minTogether = 5)
             .filter { context.isVisible(it.a) && context.isVisible(it.b) }
@@ -127,14 +127,15 @@ object Metrics {
             adjustedLocality = if (partitionInformative && expectedLocal < 0.999) {
                 (ratio(localUnits, multiFile.size) - expectedLocal) / (1 - expectedLocal)
             } else null,
-            hubFreeRate = if (hubsMeaningful) ratio(hubAvoiding, multiFile.size) else null,
+            hubFreeRate = if (hubsMeaningful) ratio(hubAvoiding, allMultiFile.size) else null,
             boundaryIntegrity = if (partitionInformative && crossModule.isNotEmpty()) {
                 ratio(hotspotFreeCross, crossModule.size)
             } else null,
             effectiveModules = effectiveModules,
             distinctModules = incidences.size,
             lowResolution = effectiveModules < LOW_RESOLUTION,
-            multiFileUnits = multiFile.size,
+            declaredMultiFileUnits = multiFile.size,
+            multiFileUnits = allMultiFile.size,
             crossModuleUnits = crossModule.size,
             localUnits = localUnits,
             hubAvoidingUnits = hubAvoiding,
@@ -157,6 +158,7 @@ object Metrics {
             context = RunContext.of(setup),
             windowYears = m.windowYears,
             multiFileUnits = m.multiFileUnits,
+            declaredMultiFileUnits = m.declaredMultiFileUnits,
             effectiveModules = m.effectiveModules,
             distinctModules = m.distinctModules,
             lowResolution = m.lowResolution,
@@ -182,7 +184,10 @@ data class MetricsReport(
     /** Pinned conditions, module provenance, warnings, tier meanings — the shared envelope. */
     val context: RunContext,
     val windowYears: Double,
+    /** Change units touching more than one file — the denominator of [hubFreeRate]. */
     val multiFileUnits: Int,
+    /** Multi-file units restricted to declared modules — the denominator of the locality scores. */
+    val declaredMultiFileUnits: Int,
     val effectiveModules: Double,
     val distinctModules: Int,
     val lowResolution: Boolean,
