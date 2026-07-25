@@ -159,4 +159,10 @@ data class AnalysisResult(
     val moduleDetection: ModuleDetectionReport? = null,
     /** Detector types withheld because their prerequisite structure wasn't reliable. */
     val skippedDetectors: List<SkippedDetector> = emptyList(),
+    /**
+     * Files hidden from these findings by `--exclude-role`, per role. They were
+     * still counted: the co-change numbers reflect the full history, so this is a
+     * view filter, not a smaller dataset.
+     */
+    val hiddenByRole: Map<String, Int> = emptyMap(),
 )

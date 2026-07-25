@@ -61,12 +61,14 @@ Re-computing commands can replay a snapshot's conditions too — `cochange metri
 
 A snapshot stores its conditions **pinned**: the commit it ran on, `--since` as an absolute instant, and the change unit `auto` actually picked. So replaying it reads the same history rather than today's equivalent of "1 year ago". The JSON keeps both — `requestedOptions` (what you typed) and `options` (what it resolved to).
 
-**Excluding noise by role.** Tests, resources (`strings.xml`, `.pbxproj`), lockfiles, and generated files co-change with production code by nature. Drop them by role instead of writing globs — and note tests count as `source`, so `--category` can't remove them:
+**Hiding noise by role.** Tests, resources (`strings.xml`, `.pbxproj`), lockfiles, and generated files co-change with production code by nature. Hide them by role instead of writing globs — and note tests count as `source`, so `--category` can't remove them:
 
 ```bash
 cochange analyze . --exclude-role test,resource,lockfile,generated
 cochange analyze . --focus production-source   # shortcut for all four
 ```
+
+This hides files from the output; it does **not** remove them from the counts. `P(A|B)` still means what it says over the full history, and the run reports how many files each role is hiding — so switching roles on and off never silently changes the statistic under the numbers you're comparing.
 
 History-reading options (`--since`, `--branch`, `--change-unit`, …) apply **per command** — each one re-reads the Git log — so pass the same `--since` to every command to compare like with like. With no `--since` the whole history is used, and the run says so in its banner.
 

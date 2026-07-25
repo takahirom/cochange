@@ -87,7 +87,7 @@ object Metrics {
             }
         }
         val hubFiles = participation.filter { (file, count) ->
-            file in context.headFiles && count >= 20 && (partnerModules[file]?.size ?: 0) >= 5
+            context.isVisible(file) && count >= 20 && (partnerModules[file]?.size ?: 0) >= 5
         }.keys.sortedByDescending { participation[it] }
         // With < 6 modules the >= 5 partner-module predicate is unsatisfiable;
         // a perfect score there would be structural, not architectural.
@@ -95,7 +95,7 @@ object Metrics {
         val hubAvoiding = multiFile.count { change -> change.files.none { it in hubFiles } }
 
         val hotspots = context.pairs(minTogether = 5)
-            .filter { it.a in context.headFiles && it.b in context.headFiles }
+            .filter { context.isVisible(it.a) && context.isVisible(it.b) }
             .filter { boundaries.moduleOf(it.a) != boundaries.moduleOf(it.b) }
             .filter { it.confidence >= 0.6 }
             .toList()

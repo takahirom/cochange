@@ -41,8 +41,8 @@ class HistoryOptions : OptionGroup(name = "History options") {
     val groupWindowMin by option("--group-window", help = "Minutes within which same-author commits form one logical change (author-window mode)").long().restrictTo(1L..10_000L).default(30)
     val exclude by option("--exclude", help = "Glob to exclude (repeatable, adds to defaults)").multiple()
     val moduleRoot by option("--module-root", help = "Glob marking extra module-root directories (repeatable), e.g. 'ios/Targets/*' for build systems without per-module build files").multiple()
-    val excludeRole by option("--exclude-role", help = "Drop files by role before analysis: ${FileRole.EXCLUDABLE.joinToString(", ")} (comma-separated)").split(",")
-    val focus by option("--focus", help = "Shortcut: 'production-source' excludes test, resource, lockfile, and generated files").choice("production-source")
+    val excludeRole by option("--exclude-role", help = "Hide files by role from findings/pairs/clusters: ${FileRole.EXCLUDABLE.joinToString(", ")} (comma-separated). Counting still covers them, so the remaining numbers don't shift.").split(",")
+    val focus by option("--focus", help = "Shortcut: 'production-source' hides test, resource, lockfile, and generated files").choice("production-source")
 
     fun toAnalysisOptions() = AnalysisOptions(
         branch = branch, since = since, changeUnit = changeUnit,
@@ -93,6 +93,7 @@ class Analyze : CliktCommand(
             options = setup.resolvedOptions,
             moduleDetection = run.moduleDetection,
             skippedDetectors = run.skipped,
+            hiddenByRole = run.hiddenByRole,
         )
         Store.save(repo, result, save)
 
@@ -158,7 +159,7 @@ class Pairs : CliktCommand(
         printBanner(setup, { m, e -> echo(m, err = e) }, compact = true)
         echo("together  conf   modules                  pair")
         context.pairs(minTogether = minSupport)
-            .filter { it.a in headFiles && it.b in headFiles }
+            .filter { context.isVisible(it.a) && context.isVisible(it.b) }
             .filter { file == null || it.a.contains(file!!) || it.b.contains(file!!) }
             .filter { category == null || context.categoryOfPair(it.a, it.b) == category }
             .sortedByDescending { it.together }
@@ -484,6 +485,11 @@ private fun printBanner(setup: AnalysisSetup, echo: (String, Boolean) -> Unit, c
  * run" are different answers.
  */
 private fun printTrustNotes(result: AnalysisResult, echo: (String) -> Unit) {
+    if (result.hiddenByRole.isNotEmpty()) {
+        val breakdown = result.hiddenByRole.entries.sortedBy { it.key }.joinToString(", ") { "${it.key}=${it.value}" }
+        echo("hidden by --exclude-role: ${result.hiddenByRole.values.sum()} files ($breakdown)")
+        echo("  These files were still counted — the co-change numbers cover the full history; only the output hides them.")
+    }
     val modules = result.moduleDetection ?: return
     echo("module detection [derived]: ${modules.methods.joinToString(", ").ifEmpty { "none — no build files or --module-root globs matched" }}")
     echo("  coverage: ${pct(modules.coverage)} of ${modules.totalFiles} files under a declared module root " +
