@@ -596,3 +596,114 @@ class PythonPackageNestingTest {
         assertEquals("src/flask/json", boundaries.moduleOf("src/flask/json/provider.py"))
     }
 }
+
+/**
+ * Every previous round of coupling-kind fixes produced a new false description, because
+ * the rules read file extensions before asking what kind of file each endpoint is. A
+ * language difference only means "platform boundary" when both sides are code.
+ */
+class CouplingKindByCategoryTest {
+    @Test
+    fun `a config file next to code is not a platform boundary`() {
+        val estimate = CouplingKind.of("config/app.yaml", "src/App.kt", FileCategory.CONFIG, namesRelated = false)
+        assertTrue(estimate.kind != "cross-language", "was ${estimate.kind}: ${estimate.note}")
+        assertEquals("low", estimate.effort)
+    }
+
+    @Test
+    fun `a build definition and a config file are not manifest-and-source`() {
+        val estimate = CouplingKind.of("app/build.gradle.kts", "infra/deploy.yml", FileCategory.BUILD, namesRelated = false)
+        assertTrue(estimate.kind != "manifest-and-source", "deploy.yml is not code the manifest declares")
+        assertEquals("low", estimate.effort)
+    }
+
+    @Test
+    fun `a docs and source sibling pair is documentation, not parallel implementation`() {
+        val estimate = CouplingKind.of("docs/example.py", "src/example.py", FileCategory.DOCS, namesRelated = true)
+        assertEquals("documentation", estimate.kind)
+    }
+
+    @Test
+    fun `one build-file catalog, so a manifest is never mistaken for a language`() {
+        // pyproject.toml was a module root in Boundaries and a *config* file in
+        // FileCategory, so this pair came out as "toml vs py, expensive to break".
+        for (manifest in listOf("pkg/pyproject.toml", "pkg/setup.py", "pkg/CMakeLists.txt", "pkg/mix.exs")) {
+            assertEquals(
+                FileCategory.BUILD, FileCategory.of(manifest),
+                "$manifest is a module root, so it must be categorised as a build file",
+            )
+        }
+        val estimate = CouplingKind.of("pkg/pyproject.toml", "src/app.py", FileCategory.BUILD, namesRelated = false)
+        assertEquals("manifest-and-source", estimate.kind)
+    }
+
+    @Test
+    fun `two source files in different languages are still a platform boundary`() {
+        val estimate = CouplingKind.of("android/Screen.kt", "ios/Screen.swift", FileCategory.SOURCE, namesRelated = true)
+        assertEquals("cross-language", estimate.kind)
+        assertEquals("high", estimate.effort)
+    }
+}
+
+/**
+ * A dependency tree carries its own manifests, so letting module roots match before the
+ * "not our structure" check turned every vendored package into a declared module.
+ */
+class NotOurStructureOrderingTest {
+    @Test
+    fun `a dependency's own package json does not make it a module`() {
+        val files = setOf("package.json", "src/index.js", "node_modules/pkg/package.json", "node_modules/pkg/index.js")
+        val boundaries = Boundaries(files)
+        assertFalse(
+            boundaries.sourceOf("node_modules/pkg/index.js").declared,
+            "got ${boundaries.sourceOf("node_modules/pkg/index.js")}",
+        )
+    }
+
+    @Test
+    fun `a broad module-root glob does not swallow the dependencies under it`() {
+        val files = setOf("apps/a/main.js", "apps/a/node_modules/pkg/index.js")
+        val boundaries = Boundaries(files, moduleRootGlobs = listOf("apps/*"))
+        assertEquals("apps/a", boundaries.moduleOf("apps/a/main.js"))
+        assertFalse(boundaries.sourceOf("apps/a/node_modules/pkg/index.js").declared)
+    }
+
+    @Test
+    fun `an ignored go file is not claimed by a build root`() {
+        val files = setOf("app/package.json", "app/main.go", "app/_ignored.go")
+        val boundaries = Boundaries(files)
+        assertTrue(boundaries.sourceOf("app/main.go").declared)
+        assertFalse(
+            boundaries.sourceOf("app/_ignored.go").declared,
+            "go skips _-prefixed FILE names too: got ${boundaries.sourceOf("app/_ignored.go")}",
+        )
+    }
+
+    @Test
+    fun `vendor is third-party only on evidence`() {
+        // go mod vendor writes vendor/modules.txt; that settles it.
+        val vendored = Boundaries(setOf("go.mod", "vendor/modules.txt", "vendor/x/y.go", "pkg/a/a.go"))
+        assertFalse(vendored.sourceOf("vendor/x/y.go").declared)
+        // Without it, a directory called vendor may be perfectly ordinary first-party code.
+        val firstParty = Boundaries(setOf("build.gradle.kts", "vendor/Orders.kt", "src/App.kt"))
+        assertTrue(
+            firstParty.sourceOf("vendor/Orders.kt").declared,
+            "rejecting it by name alone would drop first-party code from every claim",
+        )
+    }
+
+    @Test
+    fun `an explicit module root can declare a directory named vendor`() {
+        val files = setOf("go.mod", "vendor/modules.txt", "vendor/x/y.go")
+        val boundaries = Boundaries(files, moduleRootGlobs = listOf("vendor/x"))
+        assertEquals(ModuleSource.USER_GLOB, boundaries.sourceOf("vendor/x/y.go"))
+    }
+
+    @Test
+    fun `a stub-only python package is a package`() {
+        val files = setOf("pyproject.toml", "stubs/foo/__init__.pyi", "stubs/foo/api.pyi", "stubs/bar/__init__.pyi")
+        val boundaries = Boundaries(files)
+        assertEquals("stubs/foo", boundaries.moduleOf("stubs/foo/api.pyi"))
+        assertEquals(ModuleSource.PYTHON_PACKAGE, boundaries.sourceOf("stubs/foo/api.pyi"))
+    }
+}

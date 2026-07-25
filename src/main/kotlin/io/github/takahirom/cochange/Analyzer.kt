@@ -102,66 +102,66 @@ object CouplingKind {
     /**
      * What it would cost to act on this coupling, and an honest name for what it is.
      *
+     * Decided from the two endpoints' own categories, then — only when both are source —
+     * from their languages. Reading extensions first was the source of a long line of
+     * false descriptions: `config/app.yaml` × `src/App.kt` is not "a platform boundary
+     * expensive to break", and `pyproject.toml` × `app.py` is not two languages meeting.
+     * A language difference only means something when both sides are code.
+     *
      * [category] is the PAIR's category, which `categoryOfPair` takes from the least
-     * source-like side — so `docs/example.py` × `src/example.py` is a `docs` pair even
-     * though one endpoint is production code. Every rule below therefore asks about the
-     * endpoints it actually describes, and only rules that really are "one side is X"
-     * read [category].
+     * source-like side, so it cannot stand in for either endpoint.
      */
     fun of(a: String, b: String, category: String, namesRelated: Boolean): Estimate {
-        val ka = langKey(a)
-        val kb = langKey(b)
         val ca = FileCategory.of(a)
         val cb = FileCategory.of(b)
         fun bothAre(c: String) = ca == c && cb == c
         fun eitherIs(c: String) = ca == c || cb == c
+        val bothSource = bothAre(FileCategory.SOURCE)
         return when {
             category == FileCategory.GENERATED -> Estimate(
                 "generated", "none",
                 "one side is generated — the coupling is inherent; fixing the source regenerates it, so this is not a refactoring target.",
             )
-            // A variant set is a set of DECLARATIVE files with one name under sibling
+            // A variant set is DECLARATIVE files sharing one name under sibling
             // directories: per-crate Cargo.toml bumped by one release, per-locale
-            // strings.xml translated together. Both endpoints must be declarative —
-            // asking the pair category let `docs/example.py` × `src/example.py` through.
+            // strings.xml translated together. Neither side may be source.
             siblingVariants(a, b) && !eitherIs(FileCategory.SOURCE) -> Estimate(
                 "variant-set", "none",
-                "the same file name under sibling directories, on both sides a declarative file — a variant or lockstep set (coordinated version bumps, translations, per-target manifests). The coupling is the process, not an architectural boundary problem.",
+                "the same file name under sibling directories, declarative on both sides — a variant or lockstep set (coordinated version bumps, translations, per-target manifests). The coupling is the process, not an architectural boundary problem.",
             )
-            // Same name, sibling directories, but source on at least one side: parallel
-            // implementations of one shape per feature or service. Possibly duplicated
-            // logic, which is the opposite of "expected, nothing to do".
-            siblingVariants(a, b) -> Estimate(
+            // Same name, sibling directories, source on BOTH sides: one shape implemented
+            // once per feature or service, so possibly duplicated logic.
+            siblingVariants(a, b) && bothSource -> Estimate(
                 "parallel-implementation", "medium",
-                "the same file name under sibling directories, with source on at least one side — parallel implementations of one shape per feature or service. Check for duplicated logic that belongs in a shared place, rather than assuming the coupling is expected.",
+                "the same file name under sibling directories, source on both sides — one shape implemented once per feature or service. Check for duplicated logic that belongs in a shared place, rather than assuming the coupling is expected.",
             )
             eitherIs(FileCategory.DOCS) -> Estimate(
                 "documentation", "low",
                 "one side is documentation — a changelog or a README moving with the code it describes is documentation maintenance, not a design coupling. Worth knowing which docs a module drags along; not a refactoring target.",
             )
-            // Adding a dependency or bumping a version routinely touches a build script
-            // and a version catalog together — that is how the build system is designed.
-            // Before the language rule, which read build.gradle.kts × libs.versions.toml
-            // as "jvm vs toml, a platform boundary that is expensive to break".
             bothAre(FileCategory.BUILD) -> Estimate(
                 "build-wiring", "low",
                 "both files are build definitions — adding a dependency or bumping a version routinely touches several of them at once. Still worth reading as a boundary signal, but cheap to act on and partly inherent to the build system.",
             )
-            // One manifest, one implementation: declaring a dependency or an entry point
-            // next to the code that uses it. Also not a platform boundary, which is what
-            // the language rule would have called `web/package.json` × `server/app.py`.
-            eitherIs(FileCategory.BUILD) -> Estimate(
+            eitherIs(FileCategory.BUILD) && eitherIs(FileCategory.SOURCE) -> Estimate(
                 "manifest-and-source", "low",
-                "one side is a build definition and the other the code it declares — a dependency or entry point being registered alongside its implementation. Cheap to act on; not a cross-platform design coupling.",
+                "one side is a build definition and the other the code it declares — a dependency or entry point registered alongside its implementation. Cheap to act on; not a cross-platform design coupling.",
             )
-            // Different language keys → cross-language. Before companion: two
-            // platform-parallel files often share a name (Screen.kt / Screen.swift), but
-            // that is the expensive cross-platform coupling, not a cheap companion.
-            // Unknown extensions compare by their raw extension, so an unrecognized
-            // language pair (e.g. Foo.kt / Foo.php) is not understated as low effort.
-            ka != kb -> Estimate(
+            // Whatever is left with a declarative side is a settings/declaration coupling:
+            // a manifest with a CI file, a config with the code that reads it. Cheap, and
+            // in particular NOT a language boundary, whatever the extensions say.
+            !bothSource -> Estimate(
+                "declaration-and-code", "low",
+                "at least one side is configuration or a build definition rather than code — a setting declared next to whatever consumes it. Cheap to act on, and not a design coupling across languages even when the file types differ.",
+            )
+            // From here both sides are source, so a language difference is a real
+            // platform boundary. Before companion: two platform-parallel files often
+            // share a name (Screen.kt / Screen.swift), which is the expensive coupling,
+            // not a cheap companion. Unknown extensions compare by their raw extension,
+            // so an unrecognized pair (Foo.kt / Foo.php) is not understated.
+            langKey(a) != langKey(b) -> Estimate(
                 "cross-language", "high",
-                "the two files are in different languages ($ka vs $kb) — a design coupling across a platform boundary is expensive to break; weigh it against the impact before committing.",
+                "both sides are code, in different languages (${langKey(a)} vs ${langKey(b)}) — a design coupling across a platform boundary is expensive to break; weigh it against the impact before committing.",
             )
             namesRelated -> Estimate(
                 "companion", "low",

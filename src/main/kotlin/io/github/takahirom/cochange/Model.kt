@@ -97,10 +97,22 @@ object FileCategory {
     /** Display and ranking priority: production code first, generated code last (mostly noise). */
     val priority = listOf(SOURCE, CONFIG, BUILD, DOCS, GENERATED)
 
-    private val buildNames = setOf(
+    /**
+     * Build-definition file names, lowercased. ONE list, shared with module detection —
+     * `Boundaries` kept its own, so `pyproject.toml` was a module root there and a
+     * *config* file here, and a pyproject/source pair came out as "two languages meeting".
+     */
+    val buildNames = setOf(
         "build.gradle", "build.gradle.kts", "settings.gradle", "settings.gradle.kts",
         "pom.xml", "package.json", "package-lock.json", "cargo.toml", "go.mod", "go.sum",
         "gemfile", "makefile", "dockerfile",
+        "pyproject.toml", "setup.py", "cmakelists.txt", "mix.exs", "build.bazel", "build",
+    )
+
+    /** The subset that marks a directory as a module root, in their on-disk spelling. */
+    val moduleRootFileNames = setOf(
+        "build.gradle", "build.gradle.kts", "package.json", "Cargo.toml", "go.mod", "pom.xml",
+        "BUILD.bazel", "BUILD", "pyproject.toml", "setup.py", "CMakeLists.txt", "mix.exs",
     )
     private val configExtensions = setOf("yml", "yaml", "json", "properties", "toml", "cfg", "ini")
 

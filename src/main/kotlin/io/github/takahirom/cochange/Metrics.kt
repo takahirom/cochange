@@ -34,9 +34,10 @@ data class RepoMetrics(
     val multiFileUnits: Int,
     /**
      * Multi-file units after dropping files whose module was only guessed, keeping those
-     * with two declared files left. Locality and boundary integrity are shares of THIS,
-     * because a change touching one declared file and one guessed one says nothing about
-     * the module partition.
+     * with two declared files left — because a change touching one declared file and one
+     * guessed one says nothing about the module partition. This is the denominator of
+     * [moduleLocality] and [adjustedLocality]; [boundaryIntegrity] divides by
+     * [crossModuleUnits], the subset of these that span more than one module.
      */
     val declaredMultiFileUnits: Int,
     val crossModuleUnits: Int,
@@ -159,6 +160,10 @@ object Metrics {
             windowYears = m.windowYears,
             multiFileUnits = m.multiFileUnits,
             declaredMultiFileUnits = m.declaredMultiFileUnits,
+            crossModuleUnits = m.crossModuleUnits,
+            localUnits = m.localUnits,
+            hubAvoidingUnits = m.hubAvoidingUnits,
+            hotspotFreeCrossUnits = m.hotspotFreeCrossUnits,
             effectiveModules = m.effectiveModules,
             distinctModules = m.distinctModules,
             lowResolution = m.lowResolution,
@@ -188,6 +193,14 @@ data class MetricsReport(
     val multiFileUnits: Int,
     /** Multi-file units restricted to declared modules — the denominator of the locality scores. */
     val declaredMultiFileUnits: Int,
+    /** Declared multi-file units that span more than one module — the denominator of [boundaryIntegrity]. */
+    val crossModuleUnits: Int,
+    /** Numerator of [moduleLocality]: declared multi-file units contained in one module. */
+    val localUnits: Int,
+    /** Numerator of [hubFreeRate], over [multiFileUnits]. */
+    val hubAvoidingUnits: Int,
+    /** Numerator of [boundaryIntegrity], over [crossModuleUnits]. */
+    val hotspotFreeCrossUnits: Int,
     val effectiveModules: Double,
     val distinctModules: Int,
     val lowResolution: Boolean,

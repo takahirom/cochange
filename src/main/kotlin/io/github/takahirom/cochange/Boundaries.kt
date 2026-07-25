@@ -51,6 +51,31 @@ data class ModuleDetection(
  * like a real one otherwise.
  */
 class Boundaries(headFiles: Set<String>, moduleRootGlobs: List<String> = emptyList()) {
+    /**
+     * `vendor` means "third-party" only on evidence. `vendor/modules.txt` is written by
+     * `go mod vendor`, so it settles the question; without it a directory called `vendor`
+     * may well be first-party code, and rejecting it by name alone would silently drop it
+     * from every module claim.
+     */
+    private val vendorIsThirdParty: Boolean = headFiles.any {
+        it == "vendor/modules.txt" || it.endsWith("/vendor/modules.txt")
+    }
+
+    private fun notOurStructureElements(): Set<String> =
+        if (vendorIsThirdParty) NOT_OUR_STRUCTURE + "vendor" else NOT_OUR_STRUCTURE
+
+    private fun isNotOurStructure(path: String): Boolean {
+        val excluded = notOurStructureElements()
+        return path.split('/').dropLast(1).any { it in excluded }
+    }
+
+    private fun vendorRootOf(path: String): String {
+        val excluded = notOurStructureElements()
+        val parts = path.split('/')
+        val i = parts.indexOfFirst { it in excluded }
+        return parts.take(i + 1).joinToString("/")
+    }
+
     private companion object {
         /** Sources whose roots cover one directory and one language, not a subtree. */
         val LANGUAGE_PACKAGE_SOURCES = setOf(ModuleSource.GO_PACKAGE, ModuleSource.PYTHON_PACKAGE)
@@ -63,28 +88,28 @@ class Boundaries(headFiles: Set<String>, moduleRootGlobs: List<String> = emptyLi
          * repository's module structure, so cochange must not claim declared provenance
          * for it — a vendored dependency bump would otherwise read as cross-module churn.
          */
-        val NOT_OUR_STRUCTURE = setOf("vendor", "testdata", "node_modules", "third_party")
+        val NOT_OUR_STRUCTURE = setOf("testdata", "node_modules", "third_party")
 
-        fun isNotOurStructure(path: String) =
-            path.split('/').dropLast(1).any { it in NOT_OUR_STRUCTURE }
-
-        /** Paths the go command itself skips: `_`/`.` prefixed elements, and ignored directories. */
+        /**
+         * Paths the go command itself skips: `testdata`, `vendor`, and any element — a
+         * directory OR a file name — starting with `_` or `.`.
+         */
         fun isGoIgnored(path: String): Boolean = path.split('/').any {
-            it in NOT_OUR_STRUCTURE || it.startsWith("_") || it.startsWith(".")
+            it == "testdata" || it == "vendor" || it.startsWith("_") || it.startsWith(".")
         }
     }
 
     // A deliberately thin list of common cases — not a catalog of every build
     // system. Anything else is covered by --module-root globs, and the guide
     // tells AI agents to derive those from the repository layout.
-    private val buildFileNames = setOf(
-        "build.gradle", "build.gradle.kts", "package.json", "Cargo.toml", "go.mod", "pom.xml",
-        "BUILD.bazel", "BUILD", "pyproject.toml", "setup.py", "CMakeLists.txt", "mix.exs",
-    )
+    // Shared with FileCategory, so a file cannot be a module root here and a config file
+    // there — that disagreement made a manifest/source pair read as a language boundary.
+    private val buildFileNames = FileCategory.moduleRootFileNames
 
     /** Detected module roots, longest-first (nearest wins), each tagged with the signal that found it. */
     private val moduleRoots: List<Pair<String, ModuleSource>> = run {
         val fromBuildFiles = headFiles
+            .filterNot(::isNotOurStructure)
             .filter { it.substringAfterLast('/') in buildFileNames }
             .map { it.substringBeforeLast('/', "") }
 
@@ -120,8 +145,11 @@ class Boundaries(headFiles: Set<String>, moduleRootGlobs: List<String> = emptyLi
         val fromGoPackages = headFiles
             .filter { it.endsWith(".go") && !isGoIgnored(it) }
             .map { it.substringBeforeLast('/', "") }
+        // `__init__.pyi` marks a PEP 561 stub-only package; without it a stubs tree had
+        // no package root at all and every stub collapsed into the root module.
         val fromPythonPackages = headFiles
-            .filter { it.substringAfterLast('/') == "__init__.py" }
+            .filterNot(::isNotOurStructure)
+            .filter { it.substringAfterLast('/') in setOf("__init__.py", "__init__.pyi") }
             .map { it.substringBeforeLast('/', "") }
 
         // User-supplied module roots: globs matched against every directory
@@ -166,13 +194,6 @@ class Boundaries(headFiles: Set<String>, moduleRootGlobs: List<String> = emptyLi
      * Go and Python packages are per-directory, never recursive, and a shell script
      * sitting in a Go package directory is not part of that package.
      */
-    /** The vendor/testdata directory a path sits under, so all of it is one bucket. */
-    private fun vendorRootOf(path: String): String {
-        val parts = path.split('/')
-        val i = parts.indexOfFirst { it in NOT_OUR_STRUCTURE }
-        return parts.take(i + 1).joinToString("/")
-    }
-
     private fun covers(root: String, source: ModuleSource, path: String, dir: String): Boolean = when (source) {
         // A Go package is exactly one directory: every directory holding .go files is
         // itself a package, so exact matching is complete.
@@ -188,24 +209,32 @@ class Boundaries(headFiles: Set<String>, moduleRootGlobs: List<String> = emptyLi
 
     private fun resolve(path: String): Pair<String, ModuleSource> = cache.getOrPut(path) {
         val dir = path.substringBeforeLast('/', "")
-        // Nearest root wins, EXCEPT that an explicit --module-root is authoritative:
-        // a user who says `--module-root 'internal/*'` means internal/a is the module,
-        // and the Go packages nested inside it must not subdivide it further.
-        val root = moduleRoots.firstOrNull { (r, src) ->
-            src == ModuleSource.USER_GLOB && covers(r, src, path, dir)
-        } ?: moduleRoots.firstOrNull { (r, src) -> covers(r, src, path, dir) }
-        when {
-            root != null -> (if (root.first.isEmpty()) "<root>" else root.first) to root.second
-            // Vendored code and fixtures: not this repository's structure, so they get an
-            // undeclared module of their own rather than inheriting the root module's
-            // provenance. Otherwise a vendored file and a first-party package looked like
-            // two declared modules changing together.
+        // "Not our structure" is decided FIRST. A dependency tree carries its own manifests
+        // (node_modules/pkg/package.json), so letting roots match first turned every
+        // vendored package into a declared module of this repository — and a broad
+        // `--module-root 'apps/*'` swallowed the dependencies underneath it.
+        val notOurs = when {
             isNotOurStructure(path) -> vendorRootOf(path) to ModuleSource.NOT_OUR_CODE
-            // A Go file the go command itself skips (an "_ignored" or ".hidden" element)
-            // must not inherit the root module's provenance either: paired against a real
-            // package it would look like two declared modules changing together.
+            // A Go file the go command itself skips must not be claimed by a build root
+            // either: paired against a real package it looks like two declared modules.
             path.endsWith(".go") && isGoIgnored(path) ->
                 path.substringBeforeLast('/', "<root>") to ModuleSource.NOT_OUR_CODE
+            else -> null
+        }
+        // An exact --module-root is still authoritative, so a genuinely first-party
+        // directory that happens to be called `vendor` can be declared explicitly.
+        val explicit = moduleRoots.firstOrNull { (r, src) ->
+            src == ModuleSource.USER_GLOB && r == dir && covers(r, src, path, dir)
+        }
+        // Nearest root wins, and an explicit --module-root outranks a language default:
+        // `--module-root 'internal/*'` means internal/a is the module, and the Go packages
+        // nested inside it must not subdivide it further.
+        val root = explicit
+            ?: notOurs?.let { return@getOrPut it }
+            ?: moduleRoots.firstOrNull { (r, src) -> src == ModuleSource.USER_GLOB && covers(r, src, path, dir) }
+            ?: moduleRoots.firstOrNull { (r, src) -> covers(r, src, path, dir) }
+        when {
+            root != null -> (if (root.first.isEmpty()) "<root>" else root.first) to root.second
             // Single-module repo: paths not claimed by a nested module all belong
             // to the root module, not to their top-level directory.
             rootIsModule -> "<root>" to ModuleSource.ROOT_BUILD_FILE
