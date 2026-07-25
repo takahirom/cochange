@@ -115,3 +115,51 @@ class PinnedConditionsTest {
     }
 
 }
+
+/**
+ * A finding is usually read through `inspect`, one at a time. If the run's caveats stop
+ * at `analyze`, an agent inspecting finding-1 has no way to learn that the window it
+ * came from selected nothing.
+ */
+class InspectWarningsTest {
+    private val repo = File.createTempFile("cochange-inspect-warn", "").apply { delete(); mkdirs() }
+
+    @AfterTest
+    fun cleanup() {
+        repo.deleteRecursively()
+    }
+
+    private fun git(vararg args: String) = GitLog.runGit(repo, args.toList())
+
+    @Test
+    fun `inspect carries the warnings of the run it replays`() {
+        git("init", "-q", "-b", "main")
+        git("config", "user.email", "t@example.com")
+        git("config", "user.name", "T")
+        // Two declared modules with a strong coupling, so there is a finding to inspect.
+        for (i in 1..8) {
+            File(repo, "app/build.gradle.kts").apply { parentFile.mkdirs() }.writeText("// app")
+            File(repo, "core/build.gradle.kts").apply { parentFile.mkdirs() }.writeText("// core")
+            File(repo, "app/A.kt").writeText("a$i\n")
+            File(repo, "core/B.kt").writeText("b$i\n")
+            git("add", "-A")
+            git("-c", "commit.gpgsign=false", "commit", "-q", "-m", "change $i")
+        }
+        // No --since at all: a note, not a warning, but it must still travel.
+        // One commit per unit: the commits here are instantaneous, so author-window
+        // grouping would collapse all eight into one and there would be no finding.
+        val analyze = Analyze().test(listOf(repo.path, "--change-unit", "commit", "--save", "w"))
+        assertEquals(0, analyze.statusCode, analyze.output)
+        val inspect = Inspect().test(listOf("finding-1", repo.path, "--analysis", "w"))
+        assertEquals(0, inspect.statusCode, inspect.output)
+        val report = json.decodeFromString(InspectReport.serializer(), inspect.stdout)
+        assertTrue(
+            report.warnings.any { it.code == AnalysisWarning.NO_WINDOW },
+            "inspect must repeat the run's caveats: ${report.warnings.map { it.code }}",
+        )
+    }
+
+    private companion object {
+        val json = kotlinx.serialization.json.Json { ignoreUnknownKeys = true }
+    }
+}

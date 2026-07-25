@@ -183,6 +183,11 @@ data class InspectReport(
     val moduleDetection: ModuleDetectionReport? = null,
     val skippedDetectors: List<SkippedDetector> = emptyList(),
     val hiddenByRole: Map<String, Int> = emptyMap(),
+    /**
+     * The saved run's caveats, carried through: a finding read on its own says nothing
+     * about whether the window that produced it was valid.
+     */
+    val warnings: List<AnalysisWarning> = emptyList(),
     /** True when HEAD has moved since the snapshot was taken. */
     val stale: Boolean = false,
     val finding: Finding,

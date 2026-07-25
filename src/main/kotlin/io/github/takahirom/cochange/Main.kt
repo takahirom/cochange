@@ -531,6 +531,7 @@ class Inspect : CliktCommand(
                 moduleDetection = result.moduleDetection,
                 skippedDetectors = result.skippedDetectors,
                 hiddenByRole = result.hiddenByRole,
+                warnings = result.warnings,
                 stale = current != null && result.headCommit.isNotEmpty() && current != result.headCommit,
                 finding = finding,
                 supportingChanges = supporting,
