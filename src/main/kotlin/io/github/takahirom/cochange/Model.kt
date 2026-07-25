@@ -302,7 +302,10 @@ data class AnalysisResult(
      * broken window is indistinguishable from a clean repository otherwise.
      */
     val warnings: List<AnalysisWarning> = emptyList(),
-)
+) {
+    /** Detector types this schema version knows about — used to tell "none ran" from "none found". */
+    val detectorTypes: Set<String> get() = setOf("boundary_mismatch", "unstable_hub", "split_candidate")
+}
 
 /**
  * Version 2 renamed nothing silently: `confidence` is now documented per detector

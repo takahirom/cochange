@@ -80,6 +80,20 @@ class AnalysisSetup(
                     ))
                 }
             }
+            // author-window merges consecutive same-author commits, and a repository worked
+            // on in rapid bursts can collapse a lot of history into very few units. The
+            // ratio is the thing to report: it is what decides whether a "pattern" is
+            // several independent decisions or one afternoon.
+            val commits = changes.sumOf { it.commits.size }
+            val perUnit = if (changes.isEmpty()) 0.0 else commits.toDouble() / changes.size
+            if (changeUnitName == "author-window" && changes.isNotEmpty() && perUnit >= 3.0) {
+                add(AnalysisWarning(
+                    AnalysisWarning.COARSE_GROUPING, "note",
+                    "$commits commits grouped into ${changes.size} change units " +
+                        "(${"%.1f".format(perUnit)} commits per unit). If unrelated work is being merged into " +
+                        "one unit, compare against --change-unit commit or a smaller --group-window.",
+                ))
+            }
             if (shallow) add(AnalysisWarning(
                 AnalysisWarning.SHALLOW_CLONE, "warning",
                 "Shallow clone: history is truncated, so every ratio is biased. Run 'git fetch --unshallow'.",

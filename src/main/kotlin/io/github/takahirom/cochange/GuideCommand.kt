@@ -292,6 +292,13 @@ private val GUIDE_TOPICS: Map<String, String> = linkedMapOf(
         == guide: small-repo ==
         Few commits (young repo, or a short --since window).
 
+        First read the run's own numbers: "N change units" in the banner, and the
+        few_change_units warning if present. It states what share of the whole
+        history a finding would have to rest on — at 10 units and
+        --min-support 5 that is 50%, which is a sample problem, not a
+        threshold problem. Watch the commits-per-unit note too: author-window
+        can compress a burst-committed repo hard.
+
         Defaults assume years of history. With hundreds of changes or fewer:
           1. Drop --since entirely (analyze the whole history).
           2. Lower the bars: --min-support 3 --min-confidence 0.5, and for
@@ -299,6 +306,9 @@ private val GUIDE_TOPICS: Map<String, String> = linkedMapOf(
           3. Expect few or no findings — that's a valid result, not a failure.
              Say "not enough history for strong claims" instead of forcing
              weak findings into conclusions.
+          4. Raw evidence is never gated, so `pairs` and `clusters` still work
+             at a lower --min-support even when every detector was withheld.
+             In a one-module repo that IS the answer: see guide extract-module.
         Every threshold you lowered must be reported alongside the findings;
         support-3 evidence is a hint, not a case.
     """.trimIndent(),

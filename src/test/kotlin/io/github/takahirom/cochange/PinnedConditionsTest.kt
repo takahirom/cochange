@@ -163,3 +163,72 @@ class InspectWarningsTest {
         val json = kotlinx.serialization.json.Json { ignoreUnknownKeys = true }
     }
 }
+
+/**
+ * "No findings" has several very different causes. Running cochange on its own young,
+ * single-module repository produced a bare "try lowering --min-support", which is the
+ * right advice for only one of them — and said nothing about the fact that a finding
+ * would have had to rest on half of the entire history.
+ */
+class EmptyResultHonestyTest {
+    private val repo = File.createTempFile("cochange-empty", "").apply { delete(); mkdirs() }
+
+    @AfterTest
+    fun cleanup() {
+        repo.deleteRecursively()
+    }
+
+    private fun git(vararg args: String) = GitLog.runGit(repo, args.toList())
+
+    private fun commitBursts(count: Int) {
+        git("init", "-q", "-b", "main")
+        git("config", "user.email", "t@example.com")
+        git("config", "user.name", "T")
+        File(repo, "build.gradle.kts").writeText("// root")
+        for (i in 1..count) {
+            File(repo, "src/A.kt").apply { parentFile.mkdirs() }.writeText("a$i\n")
+            File(repo, "src/B.kt").writeText("b$i\n")
+            git("add", "-A")
+            git("-c", "commit.gpgsign=false", "commit", "-q", "-m", "change $i")
+        }
+    }
+
+    @Test
+    fun `a tiny sample is reported as a sample problem, not a threshold problem`() {
+        commitBursts(6)
+        val result = Analyze().test(listOf(repo.path, "--change-unit", "commit", "--save", "e", "--json"))
+        assertEquals(0, result.statusCode, result.output)
+        val parsed = json.decodeFromString(AnalysisResult.serializer(), result.stdout)
+        val warning = parsed.warnings.single { it.code == AnalysisWarning.FEW_CHANGE_UNITS }
+        assertEquals(AnalysisWarning.WARNING, warning.severity)
+        assertTrue("of the whole analyzed history" in warning.message, warning.message)
+        assertTrue("not enough independent changes" in warning.message, warning.message)
+    }
+
+    @Test
+    fun `withheld detectors are named instead of being read as a clean repository`() {
+        commitBursts(6)
+        val analyze = Analyze().test(listOf(repo.path, "--change-unit", "commit", "--save", "e"))
+        assertEquals(0, analyze.statusCode, analyze.output)
+        assertTrue(analyze.output.contains("were withheld"), analyze.output)
+        assertTrue(
+            analyze.output.contains("Raw evidence is unaffected"),
+            "the gate never touches pairs/clusters, so say where to look: ${analyze.output}",
+        )
+    }
+
+    @Test
+    fun `a large sample carries no sample warning`() {
+        commitBursts(40)
+        val result = Analyze().test(listOf(repo.path, "--change-unit", "commit", "--save", "e2", "--json"))
+        val parsed = json.decodeFromString(AnalysisResult.serializer(), result.stdout)
+        assertTrue(
+            parsed.warnings.none { it.code == AnalysisWarning.FEW_CHANGE_UNITS },
+            "warnings were ${parsed.warnings.map { it.code }}",
+        )
+    }
+
+    private companion object {
+        val json = kotlinx.serialization.json.Json { ignoreUnknownKeys = true }
+    }
+}

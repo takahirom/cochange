@@ -81,6 +81,19 @@ class Analyze : CliktCommand(
         val changes = setup.changes
         val run = Analyzer(minSupport, minConfidence).run(setup.context)
 
+        // A support-N finding drawn from very few change units would have to rest on a
+        // large share of the entire analyzed history. Report the ratio rather than a bar:
+        // it is what tells a reader whether "no findings" means "clean" or "no sample".
+        val sampleWarning = if (changes.isNotEmpty() && changes.size < minSupport * 4) {
+            listOf(AnalysisWarning(
+                AnalysisWarning.FEW_CHANGE_UNITS, "warning",
+                "Only ${changes.size} change units in this window, so a finding at --min-support " +
+                    "$minSupport would rest on ${pct(minSupport.toDouble() / changes.size)} of the whole " +
+                    "analyzed history. Read \"no findings\" as \"not enough independent changes to say\", " +
+                    "not as \"nothing to fix\" — see: cochange guide small-repo.",
+            ))
+        } else emptyList()
+
         val result = AnalysisResult(
             schemaVersion = SCHEMA_VERSION,
             repo = repo.path,
@@ -96,7 +109,7 @@ class Analyze : CliktCommand(
             moduleDetection = run.moduleDetection,
             skippedDetectors = run.skipped,
             hiddenByRole = run.hiddenByRole,
-            warnings = setup.warnings,
+            warnings = setup.warnings + sampleWarning,
         )
         Store.save(repo, result, save)
 
@@ -643,6 +656,11 @@ private fun printBanner(setup: AnalysisSetup, echo: (String, Boolean) -> Unit, c
  * run" are different answers.
  */
 private fun printTrustNotes(result: AnalysisResult, echo: (String) -> Unit) {
+    // Warnings the ANALYSIS added (not the setup, which the banner already printed):
+    // the sample-size caveat is only knowable once the thresholds are known.
+    for (w in result.warnings.filter { it.code == AnalysisWarning.FEW_CHANGE_UNITS }) {
+        echo("WARNING: ${w.message}")
+    }
     if (result.hiddenByRole.isNotEmpty()) {
         val breakdown = result.hiddenByRole.entries.sortedBy { it.key }.joinToString(", ") { "${it.key}=${it.value}" }
         echo("hidden by --exclude-role: ${result.hiddenByRole.values.sum()} files ($breakdown)")
@@ -663,7 +681,26 @@ private fun printTrustNotes(result: AnalysisResult, echo: (String) -> Unit) {
 private fun printFindingsSummary(result: AnalysisResult, echo: (String) -> Unit) {
     printTrustNotes(result, echo)
     if (result.findings.isEmpty()) {
-        echo("No findings above thresholds. Try lowering --min-support / --min-confidence.")
+        // "No findings" has several very different causes, and telling the reader to lower
+        // a threshold is the right advice for only one of them.
+        val withheld = result.skippedDetectors.map { it.type }
+        val ran = (result.detectorTypes - withheld.toSet()).size
+        echo(
+            when {
+                withheld.isNotEmpty() && ran == 0 ->
+                    "No findings: every detector was withheld (${withheld.joinToString(", ")}) — see the reason above. " +
+                        "This says nothing about the repository yet."
+                withheld.isNotEmpty() ->
+                    "No findings from the detectors that ran; ${withheld.joinToString(", ")} " +
+                        "${if (withheld.size == 1) "was" else "were"} withheld (see above). " +
+                        "For what did run, try lowering --min-support / --min-confidence."
+                else ->
+                    "No findings above thresholds. Try lowering --min-support / --min-confidence, " +
+                        "or widen the window — see: cochange guide small-repo."
+            },
+        )
+        // Raw evidence is never gated, so point at what is still available.
+        echo("Raw evidence is unaffected: cochange pairs . --min-support 2  /  cochange clusters . --min-support 2")
         return
     }
     // "Review candidates", not "findings you should act on": every line below is

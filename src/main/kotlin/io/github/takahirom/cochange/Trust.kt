@@ -145,6 +145,8 @@ data class AnalysisWarning(
 ) {
     companion object {
         const val WINDOW_IS_NOW = "window_is_now"
+        const val FEW_CHANGE_UNITS = "few_change_units"
+        const val COARSE_GROUPING = "coarse_grouping"
         const val NO_WINDOW = "no_window"
         const val SHALLOW_CLONE = "shallow_clone"
         const val MODULE_DETECTION = "module_detection"
