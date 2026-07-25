@@ -74,9 +74,10 @@ private val GUIDE_TOPICS: Map<String, String> = linkedMapOf(
              Findings are ordered source-first, strongest-first. Triage by
              type + impact; ignore build/docs categories on a first pass.
           3. cochange inspect <finding-id> <repo>
-             Read observation, counterSignals, and metrics — not just the
-             summary. supportingChanges are commit hashes: `git -C <repo> show
-             --stat <hash>` shows the actual change that produced the signal.
+             Read observation, counterSignals, and evidence — not just the
+             summary. supportingCommits give each backing change's subject,
+             date, and per-file churn: read two or three before claiming the
+             files change for the same reason.
           4. cochange clusters <repo> --category source
              The de-facto change units. Use when findings feel fragmented —
              clusters show the whole group a pair belongs to.

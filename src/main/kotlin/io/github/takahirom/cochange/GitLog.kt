@@ -34,6 +34,45 @@ object GitLog {
         return parseLog(output, excludes)
     }
 
+    /**
+     * Resolves supporting-change hashes into readable commits: subject, date, and
+     * per-file churn restricted to [files]. A bare hash asks the reader to go run
+     * `git show` before they can judge whether two files changed for the same
+     * reason — which is the one question co-change alone cannot answer.
+     *
+     * Resolved on demand rather than stored, so an old snapshot gains this too and
+     * the cache doesn't carry a copy of the log.
+     */
+    fun commitSummaries(repo: File, hashes: List<String>, files: Set<String>): List<CommitSummary> {
+        if (hashes.isEmpty()) return emptyList()
+        val args = buildList {
+            add("show")
+            add("--no-patch")
+            add("--numstat")
+            add("--date=short")
+            add("--pretty=format:$COMMIT_SEP%H$FIELD_SEP%ad$FIELD_SEP%an$FIELD_SEP%s")
+            addAll(hashes)
+        }
+        val output = runCatching { runGit(repo, args) }.getOrNull() ?: return emptyList()
+        return output.split(COMMIT_SEP)
+            .filter { it.isNotBlank() }
+            .mapNotNull { block ->
+                val lines = block.lines()
+                val fields = lines.first().split(FIELD_SEP)
+                if (fields.size < 4) return@mapNotNull null
+                // `git show --numstat --no-patch` prints numstat for non-merges only,
+                // so churn is absent for a merge commit rather than wrong.
+                val churn = lines.drop(1).mapNotNull { line ->
+                    val parts = line.split('\t')
+                    if (parts.size < 3) return@mapNotNull null
+                    val path = parts[2]
+                    if (path !in files) return@mapNotNull null
+                    path to ((parts[0].toIntOrNull() ?: 0) + (parts[1].toIntOrNull() ?: 0))
+                }.toMap()
+                CommitSummary(fields[0], fields[1], fields[2], fields[3].trim(), churn)
+            }
+    }
+
     fun headFiles(repo: File, branch: String?): Set<String> =
         runGit(repo, listOf("ls-tree", "-r", branch ?: "HEAD"))
             .lineSequence()

@@ -453,10 +453,37 @@ class Inspect : CliktCommand(
     private val analysis by option("--analysis", help = "Which saved analysis snapshot to read (default: ${Store.DEFAULT_NAME})").default(Store.DEFAULT_NAME)
 
     override fun run() {
+        val repo = File(path).canonicalFile
         val result = loadOrFail(path, analysis)
         val finding = result.findings.find { it.id == id }
             ?: error("no finding '$id' — available: ${result.findings.joinToString(", ") { it.id }}")
-        echo(Store.encode(finding))
+        // Resolve the hashes now rather than storing subjects and churn in the cache:
+        // an older snapshot benefits too, and the cache stays a cache.
+        val commits = runCatching {
+            GitLog.commitSummaries(repo, finding.detail.supportingChanges, finding.files.toSet())
+        }.getOrDefault(emptyList())
+        val current = runCatching { GitLog.headCommit(repo, null) }.getOrNull()
+        echo(reportJson.encodeToString(
+            InspectReport.serializer(),
+            InspectReport(
+                analysis = analysis,
+                repo = result.repo,
+                branch = result.branch,
+                headCommit = result.headCommit,
+                shallow = result.shallow,
+                changeUnit = result.changeUnit,
+                analyzedCommits = result.analyzedCommits,
+                logicalChanges = result.logicalChanges,
+                requestedOptions = result.requestedOptions,
+                options = result.options,
+                moduleDetection = result.moduleDetection,
+                skippedDetectors = result.skippedDetectors,
+                hiddenByRole = result.hiddenByRole,
+                stale = current != null && result.headCommit.isNotEmpty() && current != result.headCommit,
+                finding = finding,
+                supportingCommits = commits,
+            ),
+        ))
     }
 }
 

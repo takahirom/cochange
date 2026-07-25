@@ -56,6 +56,12 @@ data class Finding(
      */
     val confidence: Double,
     val impact: String,
+    /**
+     * The files this finding is about — the pair, the hub, or the split candidate.
+     * Summaries abbreviate paths for readability, so a consumer needs these to act
+     * on a finding without parsing prose.
+     */
+    val files: List<String> = emptyList(),
     /** Always [EvidenceTier.INTERPRETATION]: a finding is a review candidate, not a measurement. */
     val tier: String = EvidenceTier.INTERPRETATION,
     /** The counted numbers underneath, with the denominator spelled out. */
