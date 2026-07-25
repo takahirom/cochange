@@ -22,6 +22,8 @@ cochange mixes three kinds of statement and labels them, because reading them as
 | **derived** | Structure inferred from the repo: modules, categories, roles, clusters, change units | Best-effort per repository. Each carries its detection method and coverage |
 | **interpretation** | What a coupling might mean and what it might cost: findings, impact, effort | Heuristic. These are review candidates, not verified defects |
 
+Every `--json` output carries a `schemaVersion`, the pinned conditions it ran under, module-detection provenance, and a `tier` on each block — so a consumer never has to guess which layer a number came from. Findings also publish the scores that ranked them (`evidence.evidenceStrength`, `evidence.interest`, `evidence.nameSimilarity`) and name their own denominator (`evidence.sampleMeaning`), because a bare `1.0` from 5-of-5 and a `0.8` from 20-of-25 are not what they look like.
+
 When the derived layer is too weak to support an interpretation, cochange **withholds** the finding rather than footnoting it — e.g. if module detection resolved most files by directory name instead of by a build file, `boundary_mismatch` and `unstable_hub` are not produced, and the run says so. Raw evidence (`pairs`, `clusters`, `metrics`) is never withheld.
 
 ## Install
@@ -42,6 +44,7 @@ cochange pairs /path/to/repo --category source         # raw co-change pairs, st
 cochange clusters /path/to/repo --category source      # de-facto change units (grouped pairs)
 cochange detectors                                     # what this tool can find
 cochange metrics /path/to/repo --json                  # repo-level scores (higher = better), for trending over time
+cochange pairs /path/to/repo --json                    # raw evidence as JSON (also clusters --json)
 cochange compare /path/to/repo --baseline 180d --recent 30d  # what's heating up vs cooling down
 cochange guide                                         # playbooks: which commands, in what order, and how to read the results
 ```

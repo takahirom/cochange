@@ -81,6 +81,7 @@ class Analyze : CliktCommand(
         val run = Analyzer(minSupport, minConfidence).run(setup.context)
 
         val result = AnalysisResult(
+            schemaVersion = SCHEMA_VERSION,
             repo = repo.path,
             branch = history.branch ?: "HEAD",
             headCommit = setup.headCommit,
@@ -148,30 +149,39 @@ class Pairs : CliktCommand(
     private val file by option("--file", help = "Only pairs involving a path containing this substring")
     private val category by option("--category", help = "Only pairs in this category (source, config, build, docs, generated)")
     private val analysis by option("--analysis", help = "Reuse the conditions (window/excludes/change-unit) from a saved analysis snapshot")
+    private val asJson by option("--json", help = "Print the pairs as JSON, with the run's pinned conditions and provenance").flag()
 
     override fun run() {
         val repo = File(path).canonicalFile
         val setup = Analysis.contextFor(repo, resolveOptions(path, analysis, history))
         val context = setup.context
-        val headFiles = context.headFiles
         val boundaries = context.boundaries
 
-        printBanner(setup, { m, e -> echo(m, err = e) }, compact = true)
-        echo("together  conf   modules                  pair")
-        context.pairs(minTogether = minSupport)
+        val selected = context.pairs(minTogether = minSupport)
             .filter { context.isVisible(it.a) && context.isVisible(it.b) }
             .filter { file == null || it.a.contains(file!!) || it.b.contains(file!!) }
             .filter { category == null || context.categoryOfPair(it.a, it.b) == category }
             .sortedByDescending { it.together }
             .take(top)
-            .forEach { p ->
-                val conf = p.confidence
-                val modA = boundaries.moduleOf(p.a)
-                val modB = boundaries.moduleOf(p.b)
-                val modules = if (modA == modB) "same ($modA)" else "$modA <-> $modB"
-                echo("%8d  %.2f   %-22s  %s (%d)  +  %s (%d)".format(
-                    p.together, conf, modules, p.a, p.countA, p.b, p.countB))
-            }
+            .toList()
+
+        if (asJson) {
+            echo(reportJson.encodeToString(
+                PairsReport.serializer(),
+                PairsReport(RunContext.of(setup), minSupport, selected.map { pairReport(it, context) }),
+            ))
+            return
+        }
+
+        printBanner(setup, { m, e -> echo(m, err = e) }, compact = true)
+        echo("together  conf   modules                  pair")
+        selected.forEach { p ->
+            val modA = boundaries.moduleOf(p.a)
+            val modB = boundaries.moduleOf(p.b)
+            val modules = if (modA == modB) "same ($modA)" else "$modA <-> $modB"
+            echo("%8d  %.2f   %-22s  %s (%d)  +  %s (%d)".format(
+                p.together, p.confidence, modules, p.a, p.countA, p.b, p.countB))
+        }
     }
 }
 
@@ -188,6 +198,7 @@ class ClustersCommand : CliktCommand(
     private val show by option("--show", help = "Expand one cluster (by its number) to its full file list").int().restrictTo(min = 1)
     private val analysis by option("--analysis", help = "Reuse the conditions (window/excludes/change-unit) from a saved analysis snapshot")
     private val noCollapse by option("--no-collapse", help = "Don't collapse synchronized sibling families (e.g. strings.xml across locales) into one node").flag()
+    private val asJson by option("--json", help = "Print the clusters as JSON, with full file lists, the run's pinned conditions, and provenance").flag()
 
     override fun run() {
         val repo = File(path).canonicalFile
@@ -206,6 +217,32 @@ class ClustersCommand : CliktCommand(
             val fam = famByRep[file] ?: return file
             val siblings = fam.members.filter { it != file }.map { it.substringBeforeLast('/').substringAfterLast('/') }
             return "$file (+${siblings.size} sibling${if (siblings.size == 1) "" else "s"}: ${siblings.joinToString(", ")})"
+        }
+
+        if (asJson) {
+            // JSON gets every cluster's full file list: the text overview truncates
+            // because a monolith would flood a terminal, but a consumer needs it all.
+            echo(reportJson.encodeToString(
+                ClustersReport.serializer(),
+                ClustersReport(
+                    context = RunContext.of(setup),
+                    minSupport = minSupport,
+                    minJaccard = minJaccard,
+                    clusters = clusters.mapIndexed { i, cluster ->
+                        ClusterReport(
+                            index = i + 1,
+                            files = cluster.files,
+                            modules = cluster.files.map { boundaries.moduleOf(it) }.distinct().sorted(),
+                            strongPairs = cluster.edges.size,
+                            pairSupportVolume = cluster.pairSupportVolume,
+                            strongest = cluster.edges.firstOrNull()
+                                ?.let { ClusterEdgeReport(it.a, it.b, it.together, round2(it.jaccard)) },
+                            collapsedFamilies = cluster.files.mapNotNull { f -> famByRep[f]?.let { f to it.members } }.toMap(),
+                        )
+                    },
+                ),
+            ))
+            return
         }
 
         printBanner(setup, { m, e -> echo(m, err = e) }, compact = true)
@@ -435,6 +472,13 @@ private fun loadOrFail(path: String, analysis: String = Store.DEFAULT_NAME): Ana
             else -> "run: cochange analyze $path --save $analysis"
         }
         error("no analysis '$analysis' for $repo — $hint")
+    }
+    if (result.schemaVersion != SCHEMA_VERSION) {
+        error(
+            "analysis '$analysis' uses schema v${result.schemaVersion}; this cochange reads v$SCHEMA_VERSION. " +
+                "Field meanings changed, so it won't be reinterpreted — re-run: cochange analyze $path" +
+                if (analysis != Store.DEFAULT_NAME) " --save $analysis" else "",
+        )
     }
     if (result.headCommit.isNotEmpty()) {
         val current = runCatching { GitLog.headCommit(repo, null) }.getOrNull()

@@ -46,8 +46,20 @@ data class Finding(
     val type: String,
     val category: String = "source",
     val summary: String,
+    /**
+     * The finding's headline ratio in 0..1. **Detector-specific**: for
+     * `boundary_mismatch` it is P(other | rarer); for `unstable_hub` the share of
+     * multi-file changes the file was dragged into; for `split_candidate` the
+     * share of the file's own changes that involved one of its partner groups.
+     * Comparable within a type, not across types — use [evidence] for the raw
+     * numbers and `evidence.evidenceStrength` for a sample-corrected strength.
+     */
     val confidence: Double,
     val impact: String,
+    /** Always [EvidenceTier.INTERPRETATION]: a finding is a review candidate, not a measurement. */
+    val tier: String = EvidenceTier.INTERPRETATION,
+    /** The counted numbers underneath, with the denominator spelled out. */
+    val evidence: FindingEvidence? = null,
     /** Rough effort to act on this finding (none/low/medium/high), so it can be read for ROI, not just impact. Empty when not estimated. */
     val effort: String = "",
     val detail: FindingDetail,
@@ -112,6 +124,35 @@ object FileCategory {
     }
 }
 
+/**
+ * The counted part of a finding, typed rather than stringly. Every field is a
+ * number a consumer can compare or threshold on — which the old
+ * `metrics: Map<String, String>` (whose keys embedded file paths) could not be.
+ *
+ * [ratio] alone is misleading on small samples: 5 out of 5 is 1.0 and means very
+ * little. [evidenceStrength] and [interest] are the sample-corrected numbers the
+ * ranking actually uses, exposed here so a consumer can apply the same judgement
+ * instead of trusting list order.
+ */
+@Serializable
+data class FindingEvidence(
+    /** Change units that back the claim. */
+    val support: Int,
+    /** The denominator [support] is measured against. */
+    val sampleSize: Int,
+    /** What [sampleSize] counts, in words — the denominator differs per finding type. */
+    val sampleMeaning: String,
+    /** [support] / [sampleSize]. */
+    val ratio: Double,
+    /** Sample-corrected pair strength (Wilson-bounded Jaccard × log support). Null when the finding isn't about one pair. */
+    val evidenceStrength: Double? = null,
+    /** The score that ordered these findings. Null when this type was ordered by something else. */
+    val interest: Double? = null,
+    /** 0..1 name overlap. High means the coupling was predictable from the names alone. */
+    val nameSimilarity: Double? = null,
+    val tier: String = EvidenceTier.EVIDENCE,
+)
+
 @Serializable
 data class FindingDetail(
     val observation: String,
@@ -125,20 +166,39 @@ data class FindingDetail(
 
 /**
  * One independent partner cluster of a split_candidate: the full file list (no
- * truncation), how strongly it co-changes with the candidate, and the span of
- * dates over which that coupling was active — so a reader can tell "two
- * responsibilities" apart from "old vs new era of one responsibility".
+ * truncation), how strongly it co-changes with the candidate, and when that
+ * coupling was seen — so a reader can tell "two responsibilities" apart from
+ * "old vs new era of one responsibility".
  */
 @Serializable
 data class SplitGroup(
     val files: List<String>,
+    /** Change units in which the candidate changed together with at least one file in this group. */
     val support: Int,
-    val activeFrom: String,
-    val activeTo: String,
+    /**
+     * Sum of the pairwise co-change counts between the candidate and each member.
+     * Larger than [support] whenever one change unit touched several members, so
+     * it ranks groups but is not a count of anything.
+     */
+    val linkWeight: Int,
+    /** Date of the first change unit counted in [support]. */
+    val firstSeen: String,
+    /**
+     * Date of the last one. [firstSeen]..[lastSeen] are bounds, not an interval of
+     * continuous activity — the group may have been idle for most of it.
+     */
+    val lastSeen: String,
 )
 
 @Serializable
 data class AnalysisResult(
+    /**
+     * Contract version of this JSON. Bumped when a field's *meaning* changes, so a
+     * consumer that pinned an older shape can refuse rather than silently
+     * misread — additive fields don't bump it. Defaults to 1 so a snapshot written
+     * before versioning existed is identified as old rather than as current.
+     */
+    val schemaVersion: Int = 1,
     val repo: String,
     val branch: String,
     val headCommit: String = "",
@@ -166,3 +226,12 @@ data class AnalysisResult(
      */
     val hiddenByRole: Map<String, Int> = emptyMap(),
 )
+
+/**
+ * Version 2 renamed nothing silently: `confidence` is now documented per detector
+ * and no longer uses arbitrary count/50 scales, `SplitGroup.support` counts change
+ * units instead of summed pair weights (that value moved to `linkWeight`), and
+ * `activeFrom`/`activeTo` became `firstSeen`/`lastSeen` because they are bounds,
+ * not a continuous interval.
+ */
+const val SCHEMA_VERSION = 2

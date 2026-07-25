@@ -185,6 +185,15 @@ class BoundaryMismatchDetector(
                 "evolve as one change unit across a module boundary",
             confidence = round2(confidence),
             impact = if (confidence >= 0.8 && reverse >= 0.3 && p.together >= 10 && !namesRelated(p.a, p.b)) "high" else "medium",
+            evidence = FindingEvidence(
+                support = p.together,
+                sampleSize = rarerCount,
+                sampleMeaning = "change units touching ${name(rarer)}, the rarer of the two files",
+                ratio = round2(confidence),
+                evidenceStrength = round2(Surprise.evidenceStrength(p.together, p.countA, p.countB)),
+                interest = round2(Surprise.interest(p, architecturalDistance = 1.0)),
+                nameSimilarity = round2(Surprise.nameSimilarity(p.a, p.b)),
+            ),
             effort = coupling.effort,
             detail = FindingDetail(
                 observation = "${p.together} of $rarerCount changes to ${name(rarer)} also changed ${name(other)} " +
@@ -266,8 +275,17 @@ class UnstableHubDetector(
                     category = context.categoryOf(file),
                     summary = "${file.substringAfterLast('/')} participated in ${pct(rate)} of multi-file changes, " +
                         "spanning $modules other modules",
-                    confidence = round2(minOf(1.0, count / 50.0)),
+                    // The share of multi-file work this file was dragged into. Previously
+                    // count/50, an arbitrary scale that reported 1.0 for any file over 50
+                    // changes no matter how large the repository was.
+                    confidence = round2(rate),
                     impact = if (rate >= 0.05) "high" else "medium",
+                    evidence = FindingEvidence(
+                        support = count,
+                        sampleSize = multiFileChanges.size,
+                        sampleMeaning = "change units touching more than one file",
+                        ratio = round2(rate),
+                    ),
                     detail = FindingDetail(
                         observation = "$file was part of $count of ${multiFileChanges.size} multi-file changes " +
                             "(${pct(rate)}), together with files from $modules other modules.",

@@ -138,7 +138,7 @@ object Metrics {
 
     private fun ratio(n: Int, d: Int) = if (d == 0) 0.0 else n.toDouble() / d
 
-    private val json = Json { prettyPrint = true }
+    private val json = Json { prettyPrint = true; encodeDefaults = true }
 
     /** Machine-readable form for recording runs over time (dashboards, weekly reviews). */
     fun encode(setup: AnalysisSetup, m: RepoMetrics): String = json.encodeToString(
