@@ -199,9 +199,14 @@ class Boundaries(headFiles: Set<String>, moduleRootGlobs: List<String> = emptyLi
     }
 
     /**
-     * A language package covers exactly its own directory and its own language's files:
-     * Go and Python packages are per-directory, never recursive, and a shell script
-     * sitting in a Go package directory is not part of that package.
+     * A language package claims only its own language's files, and how far it reaches
+     * follows the language's own rule:
+     *
+     * - Go: exactly one directory. Every directory of `.go` files is itself a package, so
+     *   there is nothing below to inherit — and a shell script sitting in one is not part
+     *   of it.
+     * - Python: its own directory plus any descendant that is not a package itself, since
+     *   a subdirectory without `__init__.py` belongs to the nearest enclosing package.
      */
     private fun covers(root: String, source: ModuleSource, path: String, dir: String): Boolean = when (source) {
         // A Go package is exactly one directory: every directory holding .go files is
