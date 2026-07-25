@@ -18,6 +18,8 @@ data class AnalysisOptions(
     val groupWindowMin: Long = 30,
     val extraExcludes: List<String> = emptyList(),
     val moduleRoots: List<String> = emptyList(),
+    /** File roles to drop before analysis (test/resource/lockfile/generated); see [FileRole]. */
+    val excludeRoles: List<String> = emptyList(),
 )
 
 /**
@@ -65,7 +67,14 @@ object Analysis {
             else -> resolved.strategy
         }
         val excludes = DEFAULT_EXCLUDES + options.extraExcludes
-        val changes = strategy.changeUnits(repo, options.branch, options.since, excludes)
+        val rawChanges = strategy.changeUnits(repo, options.branch, options.since, excludes)
+        // Role-based exclusion: strip files whose role the user dropped, then discard
+        // change units left with nothing. Kept out of the glob path because roles
+        // (esp. tests) don't reduce to a fixed glob.
+        val roles = options.excludeRoles.toSet()
+        val changes = if (roles.isEmpty()) rawChanges else rawChanges
+            .map { change -> change.copy(commits = change.commits.map { c -> c.copy(files = c.files.filterNot { FileRole.of(it) in roles }) }) }
+            .filter { it.files.isNotEmpty() }
         val headFiles = GitLog.headFiles(repo, options.branch)
         val generated = GitLog.generatedFiles(repo, rev, headFiles)
         return AnalysisSetup(
