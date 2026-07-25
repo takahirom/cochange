@@ -5,10 +5,11 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 
 /**
- * Repository-level indicators computed from the co-change index. All headline
- * scores are shares of change units and read "higher is better". They are
- * meant for trend comparison within one repository under the same options —
- * absolute values are not comparable across repositories.
+ * Repository-level indicators computed from the co-change index. Every score reads
+ * "higher is better". All but one are shares of change units; [adjustedLocality] is
+ * chance-corrected and can go negative, meaning the module structure does worse than
+ * random placement would. They are meant for trend comparison within one repository under
+ * the same options — absolute values are not comparable across repositories.
  *
  * Guardrails: when the module partition is uninformative (one effective
  * module) the module-based scores are reported as null (N/A) instead of a
@@ -17,9 +18,13 @@ import kotlinx.serialization.json.Json
 data class RepoMetrics(
     /** Share of multi-file change units fully contained in one module. Null when the partition is uninformative. */
     val moduleLocality: Double?,
-    /** [moduleLocality] corrected for chance (kappa-style): how much the module structure contributes
-     *  beyond what random file placement with the same module sizes would already achieve.
-     *  ~0 on a monolith even when raw locality is high. */
+    /**
+     * [moduleLocality] corrected for chance (kappa-style): how much the module structure
+     * contributes beyond what random placement would already achieve, where "random" is
+     * weighted by each module's share of CHANGED-FILE INCIDENCES — its activity, not its
+     * file count, so a 100-file module and a 1-file module with equal activity weigh the
+     * same. Can be negative. Null when one effective module makes the question vacuous.
+     */
     val adjustedLocality: Double?,
     /** Share of multi-file change units not touching any hub file. Null when hubs cannot meaningfully exist (< 6 modules). */
     val hubFreeRate: Double?,
@@ -43,7 +48,7 @@ data class RepoMetrics(
     val crossModuleUnits: Int,
     val localUnits: Int,
     val hubAvoidingUnits: Int,
-    /** Hubs the rate counted, including any hidden from [hubFiles] by a role filter. */
+    /** Hubs the rate counted, including any not listed in [hubFiles]. */
     val hubCount: Int,
     val hotspotFreeCrossUnits: Int,
     /** Hub files (participation >= 20 units, >= 5 partner modules), most active first. */
@@ -216,7 +221,7 @@ data class MetricsReport(
     val localUnits: Int,
     /** Numerator of [hubFreeRate], over [multiFileUnits]. */
     val hubAvoidingUnits: Int,
-    /** Hub files the rate was computed against, including any a role filter hides from [hubFiles]. */
+    /** Hub files the rate was computed against, including any not listed in [hubFiles]. */
     val hubCount: Int,
     /** Numerator of [boundaryIntegrity], over [crossModuleUnits]. */
     val hotspotFreeCrossUnits: Int,

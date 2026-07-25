@@ -177,8 +177,12 @@ class Boundaries(headFiles: Set<String>, moduleRootGlobs: List<String> = emptyLi
             fromSwiftTargets.map { it to ModuleSource.SWIFT_TARGET } +
             fromGoPackages.map { it to ModuleSource.GO_PACKAGE } +
             fromPythonPackages.map { it to ModuleSource.PYTHON_PACKAGE }
+        // Deduplicate by (directory, source), NOT by directory: Go and Python roots have
+        // different coverage predicates, so `services/pkg` declared by both must keep both
+        // entries or `app.py` loses its Python package to the Go one and falls back to a
+        // guessed top-level folder.
         tagged
-            .distinctBy { it.first }
+            .distinct()
             .sortedByDescending { it.first.length }
     }
 

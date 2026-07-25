@@ -230,8 +230,17 @@ class ClustersCommand : CliktCommand(
 
         fun label(file: String): String {
             val fam = famByRep[file] ?: return file
-            val siblings = fam.members.filter { it != file }.map { it.substringBeforeLast('/').substringAfterLast('/') }
-            return "$file (+${siblings.size} sibling${if (siblings.size == 1) "" else "s"}: ${siblings.joinToString(", ")})"
+            // Sibling directory names are paths too: an excluded role must not be named
+            // here, only counted, or the text announces what the JSON is hiding.
+            val members = fam.members.filter { it != file }
+            val shown = members.filter(context::isVisible)
+            val hidden = members.size - shown.size
+            val names = shown.map { it.substringBeforeLast('/').substringAfterLast('/') }
+            val withheld = if (hidden > 0) {
+                (if (names.isEmpty()) "" else ", ") + "$hidden hidden by --exclude-role"
+            } else ""
+            return "$file (+${members.size} sibling${if (members.size == 1) "" else "s"}: " +
+                "${names.joinToString(", ")}$withheld)"
         }
 
         if (asJson) {
@@ -247,6 +256,8 @@ class ClustersCommand : CliktCommand(
                         ClusterReport(
                             index = i + 1,
                             files = cluster.files,
+                            fileCount = cluster.fileCount,
+                            hiddenFiles = cluster.hiddenFiles,
                             modules = cluster.files.map { boundaries.moduleOf(it) }.distinct().sorted(),
                             declaredModules = cluster.files
                                 .filter { setup.context.moduleIsDeclared(it) }
@@ -257,7 +268,13 @@ class ClustersCommand : CliktCommand(
                             pairSupportVolume = cluster.pairSupportVolume,
                             strongest = cluster.edges.firstOrNull()
                                 ?.let { ClusterEdgeReport(it.a, it.b, it.together, round2(it.jaccard)) },
-                            collapsedFamilies = cluster.files.mapNotNull { f -> famByRep[f]?.let { f to it.members } }.toMap(),
+                            // Members are paths, so an excluded role must not appear here
+                            // either — the family itself is unaffected by the filter.
+                            collapsedFamilies = cluster.files
+                                .mapNotNull { f ->
+                                    famByRep[f]?.let { fam -> f to fam.members.filter(setup.context::isVisible) }
+                                }
+                                .toMap(),
                         )
                     },
                 ),
@@ -287,7 +304,7 @@ class ClustersCommand : CliktCommand(
             }
             val cluster = clusters[showIdx - 1]
             echo("")
-            echo("cluster $showIdx: ${cluster.files.size} files, ${cluster.edges.size} strong pairs (pair-support volume ${cluster.pairSupportVolume})")
+            echo("cluster $showIdx: ${cluster.fileCount} files${hiddenNote(cluster)}, ${cluster.edges.size} strong pairs (pair-support volume ${cluster.pairSupportVolume})")
             for (file in cluster.files) {
                 echo("  ${label(file)} (${context.changeCount(file)} changes, ${boundaries.moduleOf(file)})")
             }
@@ -301,7 +318,7 @@ class ClustersCommand : CliktCommand(
             val modules = cluster.files.map { boundaries.moduleOf(it) }.distinct()
             val span = if (modules.size == 1) "1 module (${modules.first()})" else "${modules.size} modules"
             echo("")
-            echo("cluster ${i + 1}: ${cluster.files.size} files across $span, ${cluster.edges.size} strong pairs (pair-support volume ${cluster.pairSupportVolume})")
+            echo("cluster ${i + 1}: ${cluster.fileCount} files${hiddenNote(cluster)} across $span, ${cluster.edges.size} strong pairs (pair-support volume ${cluster.pairSupportVolume})")
             echo("  strongest pair: ${strongestOf(cluster)}")
         }
         echo("")
@@ -341,10 +358,12 @@ class MetricsCommand : CliktCommand(
         }
         echo("")
         echo("module locality        ${fmt(m.moduleLocality)}  (${m.localUnits}/${m.declaredMultiFileUnits} declared-module units contained in one module)")
-        echo("  adjusted for chance  ${fmt(m.adjustedLocality)}  (contribution of the module structure beyond random placement — a monolith scores ~0 here)")
+        echo("  adjusted for chance  ${fmt(m.adjustedLocality)}  (contribution of the module structure beyond random placement; N/A when one module makes the question meaningless)")
+        // isVisible also drops files absent at HEAD, so attribute this only when a role
+        // filter is actually in play.
         val hiddenHubs = m.hubCount - m.hubFiles.size
         echo("hub-free change rate   ${fmt(m.hubFreeRate)}  (${m.hubAvoidingUnits}/${m.multiFileUnits} units avoid the " +
-            "${m.hubCount} hub files${if (hiddenHubs > 0) ", $hiddenHubs hidden by --exclude-role" else ""})" +
+            "${m.hubCount} hub files${if (hiddenHubs > 0) ", $hiddenHubs not listed" else ""})" +
             if (m.hubFreeRate == null) "  [needs >= 6 modules]" else "")
         m.hubFiles.take(3).forEach { echo("                         hub: $it") }
         echo("boundary integrity     ${fmt(m.boundaryIntegrity)}  (${m.hotspotFreeCrossUnits}/${m.crossModuleUnits} cross-module units avoid the ${m.boundaryHotspots} recurring hotspot pairs)")
@@ -495,7 +514,8 @@ class CompareCommand : CliktCommand(
         val summary = computed.summary
         echo("summary: ${summary.heating} heating, ${summary.cooling} cooling, " +
             "mean shift ${"%.1f".format(summary.meanAbsShift * 100)}pp per listed file " +
-            "(${moves.size} files at --min-count $minCount)")
+            "(${summary.files} movers at --min-count $minCount" +
+            (if (summary.files != moves.size) ", ${summary.files - moves.size} not listed" else "") + ")")
 
         fun pct(v: Double) = "%3.0f%%".format(v * 100)
         fun line(m: Compare.Move) = "  " + m.file.padEnd(52) +
@@ -662,6 +682,10 @@ private fun printBanner(setup: AnalysisSetup, echo: (String, Boolean) -> Unit, c
  * when there are no findings — "nothing found" and "nothing was allowed to
  * run" are different answers.
  */
+/** "(N hidden by --exclude-role)" when a cluster's listing is shorter than its counts. */
+private fun hiddenNote(cluster: Clusters.Cluster): String =
+    if (cluster.hiddenFiles > 0) " (${cluster.hiddenFiles} hidden by --exclude-role)" else ""
+
 private fun printTrustNotes(result: AnalysisResult, echo: (String) -> Unit) {
     // Warnings the ANALYSIS added (not the setup, which the banner already printed):
     // the sample-size caveat is only knowable once the thresholds are known.

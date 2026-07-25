@@ -790,3 +790,26 @@ class LockfileCouplingTest {
         }
     }
 }
+
+/**
+ * One directory can be declared by two languages at once. Deduplicating module roots by
+ * directory alone kept whichever was found first and dropped the other, so a mixed
+ * Go/Python directory lost its Python package and its `.py` files fell back to a guessed
+ * top-level folder.
+ */
+class MixedLanguageRootTest {
+    @Test
+    fun `a directory declared by two languages keeps both roots`() {
+        val files = setOf(
+            "go.mod",
+            "services/pkg/main.go", "services/pkg/__init__.py", "services/pkg/app.py",
+        )
+        val boundaries = Boundaries(files)
+        assertEquals(ModuleSource.GO_PACKAGE, boundaries.sourceOf("services/pkg/main.go"))
+        assertEquals(
+            ModuleSource.PYTHON_PACKAGE, boundaries.sourceOf("services/pkg/app.py"),
+            "the Python package must not be discarded by the Go one",
+        )
+        assertEquals("services/pkg", boundaries.moduleOf("services/pkg/app.py"))
+    }
+}

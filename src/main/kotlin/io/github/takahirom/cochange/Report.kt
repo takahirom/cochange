@@ -110,7 +110,12 @@ data class PairsReport(val context: RunContext, val minSupport: Int, val pairs: 
 @Serializable
 data class ClusterReport(
     val index: Int,
+    /** The files shown. Excluded roles are omitted; see [hiddenFiles]. */
     val files: List<String>,
+    /** Members in total, including any omitted — what [strongPairs] and [pairSupportVolume] describe. */
+    val fileCount: Int,
+    /** Members omitted by `--exclude-role`; the counts still include them. */
+    val hiddenFiles: Int,
     val modules: List<String>,
     /**
      * The subset of [modules] backed by a declared root. A cluster used to publish bare

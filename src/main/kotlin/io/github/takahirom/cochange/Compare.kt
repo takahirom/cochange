@@ -106,11 +106,20 @@ object Compare {
     }
 
     /**
-     * A weekly-trackable summary. [totalAbsShift] grows with the number of listed
-     * files, so it is only comparable across runs with the same `--min-count` and a
-     * similar repository size; [meanAbsShift] is the per-file figure to trend.
+     * A weekly-trackable summary over every mover in scope — including any a role filter
+     * hides from the listing, so the trend number does not move when the view changes.
+     * [files] is the count it was divided by. [totalAbsShift] grows with that count, so it
+     * is only comparable across runs with the same `--min-count` and a similar repository
+     * size; [meanAbsShift] is the per-mover figure to trend.
      */
-    data class Summary(val heating: Int, val cooling: Int, val totalAbsShift: Double, val meanAbsShift: Double)
+    data class Summary(
+        val heating: Int,
+        val cooling: Int,
+        val totalAbsShift: Double,
+        val meanAbsShift: Double,
+        /** Movers the summary was computed over — every one in scope, including any the listing hides. */
+        val files: Int,
+    )
 
     fun summarize(moves: List<Move>): Summary {
         val total = moves.sumOf { abs(it.delta) }
@@ -119,6 +128,7 @@ object Compare {
             cooling = moves.count { it.delta < 0 },
             totalAbsShift = total,
             meanAbsShift = if (moves.isEmpty()) 0.0 else total / moves.size,
+            files = moves.size,
         )
     }
 
@@ -140,6 +150,7 @@ object Compare {
                 recentIsInsideBaseline = recentIsInsideBaseline(baseline, recent),
                 heating = s.heating, cooling = s.cooling,
                 totalAbsShift = round4(s.totalAbsShift), meanAbsShift = round4(s.meanAbsShift),
+                summarizedFiles = s.files,
                 moves = moves.sortedByDescending { abs(it.delta) }.map {
                     MoveJson(it.file, round4(it.baselineRate), round4(it.recentRate), round4(it.delta), it.baselineCount, it.recentCount)
                 },
@@ -193,10 +204,12 @@ object Compare {
         val recentIsInsideBaseline: Boolean,
         val heating: Int,
         val cooling: Int,
-        /** Summed |delta| across listed files. Scales with how many files are listed. */
+        /** Summed |delta| across every mover in scope. Scales with [summarizedFiles]. */
         val totalAbsShift: Double,
-        /** Per-listed-file mean |delta| — the figure to trend across runs. */
+        /** Per-mover mean |delta| — the figure to trend across runs. */
         val meanAbsShift: Double,
+        /** Movers the two figures above were computed over; `moves` may be shorter if a role is hidden. */
+        val summarizedFiles: Int,
         val moves: List<MoveJson>,
         /**
          * Derived, not evidence: every rate is a share of change units (a derived
