@@ -47,6 +47,14 @@ class AnalysisContext(
     /** A file worth showing: still present at HEAD, and not hidden by an excluded role. */
     fun isVisible(path: String): Boolean = path in headFiles && !isHidden(path)
 
+    /**
+     * True when this file's module comes from something the repository declares
+     * (a build file, a SwiftPM target, a `--module-root` glob) rather than from a
+     * top-level directory name. A finding whose claim is "these live in different
+     * modules" is only worth making about files that pass this.
+     */
+    fun moduleIsDeclared(path: String): Boolean = boundaries.sourceOf(path).declared
+
     /** How many analyzed files each excluded role is hiding, for the "and here's what you're not seeing" line. */
     val hiddenByRole: Map<String, Int> by lazy {
         if (excludedRoles.isEmpty()) emptyMap() else analyzedFiles

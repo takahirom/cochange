@@ -66,10 +66,13 @@ private val GUIDE_TOPICS: Map<String, String> = linkedMapOf(
              Read the banner first: which change unit was chosen and why. If it
              warns about a release-only branch or a shallow clone, fix that
              before trusting any numbers (see: cochange guide change-unit).
-             Then read the "module detection" block. At trust=guessed,
-             boundary_mismatch and unstable_hub are WITHHELD, not empty:
-             the build system isn't auto-detected, so inspect the directory
-             layout and re-run with --module-root '<dir-pattern>/*'.
+             Then read the "module detection" block. Findings are only made
+             about files on both sides of a boundary the repo DECLARES (build
+             file, SwiftPM target, --module-root glob). With fewer than two
+             declared modules, boundary_mismatch and unstable_hub are WITHHELD
+             entirely, not empty. Low coverage means individual pairs were
+             dropped instead. Either way: inspect the directory layout and
+             re-run with --module-root '<dir-pattern>/*'.
           2. cochange findings <repo> --json
              Findings are ordered source-first, strongest-first. Triage by
              type + impact; ignore build/docs categories on a first pass.
@@ -189,9 +192,13 @@ private val GUIDE_TOPICS: Map<String, String> = linkedMapOf(
                          roles, clusters. Best-effort; carries provenance.
           interpretation findings, impact, effort. Heuristic.
         Never quote an interpretation without checking the derived layer it
-        stands on: read moduleDetection.trust and .coverage. At trust=guessed,
-        module findings are not produced at all and skippedDetectors says so —
-        that is a withheld answer, not "nothing found".
+        stands on: read moduleDetection.trust, .coverage, and
+        .declaredModuleCount. Every module finding you DO see has both of its
+        files inside a module the repository declares; pairs resting on a
+        guessed folder name are dropped one by one, so low coverage means "you
+        are seeing less", not "these are guesses". With fewer than two declared
+        modules nothing runs at all and skippedDetectors says so — a withheld
+        answer, not "nothing found".
 
         Check a finding, in order:
           1. evidence.support vs evidence.sampleSize, and read

@@ -25,6 +25,12 @@ data class ModuleDetection(
     val totalFiles: Int,
     val bySource: Map<ModuleSource, Int>,
     val moduleCount: Int,
+    /**
+     * Distinct modules among files whose module was *declared*. This, not
+     * [moduleCount], is what decides whether a boundary claim is possible at all:
+     * two guessed top-level folders are two modules by count and none by provenance.
+     */
+    val declaredModuleCount: Int = moduleCount,
 ) {
     val declaredFiles: Int = bySource.entries.filter { it.key.declared }.sumOf { it.value }
     val coverage: Double = if (totalFiles == 0) 0.0 else declaredFiles.toDouble() / totalFiles
@@ -125,11 +131,18 @@ class Boundaries(headFiles: Set<String>, moduleRootGlobs: List<String> = emptyLi
     fun detection(files: Collection<String>): ModuleDetection {
         val bySource = HashMap<ModuleSource, Int>()
         val modules = HashSet<String>()
+        val declaredModules = HashSet<String>()
         for (file in files) {
             val (module, source) = resolve(file)
             bySource.merge(source, 1, Int::plus)
             modules.add(module)
+            if (source.declared) declaredModules.add(module)
         }
-        return ModuleDetection(totalFiles = files.size, bySource = bySource, moduleCount = modules.size)
+        return ModuleDetection(
+            totalFiles = files.size,
+            bySource = bySource,
+            moduleCount = modules.size,
+            declaredModuleCount = declaredModules.size,
+        )
     }
 }

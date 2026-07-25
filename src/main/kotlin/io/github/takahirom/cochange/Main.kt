@@ -606,7 +606,8 @@ private fun printTrustNotes(result: AnalysisResult, echo: (String) -> Unit) {
     val modules = result.moduleDetection ?: return
     echo("module detection [derived]: ${modules.methods.joinToString(", ").ifEmpty { "none — no build files or --module-root globs matched" }}")
     echo("  coverage: ${pct(modules.coverage)} of ${modules.totalFiles} files under a declared module root " +
-        "(${modules.moduleCount} module${if (modules.moduleCount == 1) "" else "s"}, trust=${modules.trust})")
+        "(${modules.moduleCount} module${if (modules.moduleCount == 1) "" else "s"}, " +
+        "${modules.declaredModuleCount} declared, trust=${modules.trust})")
     echo("  ${modules.note}")
     for (s in result.skippedDetectors) {
         echo("  WITHHELD ${s.type}: findings of this type were not produced — see above.")

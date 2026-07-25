@@ -129,6 +129,12 @@ class BoundaryMismatchDetector(
         val boundaries = context.boundaries
         val candidates = context.pairs(minTogether = minSupport)
             .filter { context.isVisible(it.a) && context.isVisible(it.b) }
+            // Both endpoints must sit in a module the repository declares. Without
+            // this the claim degrades into "these two files are in different
+            // top-level folders", which is not a boundary at all — and a repo-wide
+            // coverage threshold cannot tell the difference, because coverage is a
+            // file population and this claim is about two specific files.
+            .filter { context.moduleIsDeclared(it.a) && context.moduleIsDeclared(it.b) }
             .filter { boundaries.moduleOf(it.a) != boundaries.moduleOf(it.b) }
             .filter { it.confidence >= minConfidence }
             // Rank by architectural interest, not raw strength: a surprising
@@ -247,7 +253,10 @@ class UnstableHubDetector(
         val participation = HashMap<String, Int>()
         val partnerModules = HashMap<String, MutableSet<String>>()
         for (change in multiFileChanges) {
-            val modules = change.files.map(boundaries::moduleOf).toSet()
+            // Only declared modules count towards the spread: "spans 5 other modules"
+            // has to mean five boundaries the repository itself draws, not five
+            // top-level folders that happen to exist.
+            val modules = change.files.filter(context::moduleIsDeclared).map(boundaries::moduleOf).toSet()
             for (file in change.files) {
                 participation.merge(file, 1, Int::plus)
                 partnerModules.getOrPut(file) { HashSet() }.addAll(modules - boundaries.moduleOf(file))
@@ -256,7 +265,8 @@ class UnstableHubDetector(
 
         return participation.asSequence()
             .filter { (file, count) ->
-                context.isVisible(file) && count >= minParticipation &&
+                context.isVisible(file) && context.moduleIsDeclared(file) &&
+                    count >= minParticipation &&
                     (partnerModules[file]?.size ?: 0) >= minModuleSpread
             }
             .sortedByDescending { (file, count) -> count.toLong() * partnerModules[file]!!.size }

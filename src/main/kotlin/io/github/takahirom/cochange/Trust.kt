@@ -35,6 +35,8 @@ data class ModuleDetectionReport(
     val methods: List<String>,
     val coverage: Double,
     val moduleCount: Int,
+    /** Modules backed by a declared root. Two of these are what a boundary claim needs. */
+    val declaredModuleCount: Int,
     val declaredFiles: Int,
     val fallbackFiles: Int,
     val totalFiles: Int,
@@ -47,12 +49,21 @@ data class ModuleDetectionReport(
 )
 
 /**
- * Decides whether this repository's module detection is good enough to base
- * findings on. Raw evidence (pair counts, clusters, metrics) is never gated —
- * only the findings that assert something *about module boundaries*.
+ * Decides whether module-comparing findings are possible in this repository at
+ * all, and describes how trustworthy the detection is. Raw evidence (pair counts,
+ * clusters, metrics) is never gated — only findings that assert something *about
+ * module boundaries*.
+ *
+ * Eligibility is deliberately NOT a repository-wide coverage threshold. Coverage
+ * is a file population, while a finding's claim concerns two particular files: a
+ * 50%-coverage repo would have admitted a pair whose two endpoints were both
+ * guessed folders, and withheld a pair whose endpoints were both declared. So the
+ * repo-level question is only "are there at least two *declared* modules for
+ * anything to cross", and each finding then checks the provenance of its own
+ * endpoints via [AnalysisContext.moduleIsDeclared].
  */
 object ModuleGate {
-    /** Below this share of files resolved from a declared boundary, module findings are withheld. */
+    /** Below this share of declared coverage, [trust] is reported as `guessed`. */
     const val MIN_COVERAGE = 0.5
 
     /** At or above this share, detection is treated as reliable with no caveat. */
@@ -67,33 +78,38 @@ object ModuleGate {
         val fallback = detection.totalFiles - detection.declaredFiles
         val hint = "pass --module-root '<glob>' to declare the boundaries of this repository's layout"
         val hintSentence = hint.replaceFirstChar { it.uppercase() } + "."
-        // Trust describes provenance quality; enablement additionally requires that
-        // there be more than one module for a boundary to be crossed at all. The two
-        // are separate: a clean single-module repo has perfect provenance and still
-        // has nothing for a boundary finding to say.
+        // Trust describes provenance quality across the repository. Eligibility is a
+        // separate, narrower question: are there two declared modules for a boundary
+        // to exist between. A clean single-module repo has perfect provenance and
+        // still has nothing for a boundary finding to say.
         val trust = when {
             coverage >= GOOD_COVERAGE -> DECLARED
             coverage >= MIN_COVERAGE -> PARTIAL
             else -> GUESSED
         }
+        val enabled = detection.declaredModuleCount >= 2
         val note = when {
-            detection.moduleCount < 2 ->
-                "Only one module was resolved, so no pair can cross a module boundary. " +
-                    "If this repository does have modules cochange didn't detect, $hint."
-            trust == GUESSED ->
-                "Only ${pct(coverage)} of files sit under a declared module root; the rest were bucketed by " +
-                    "top-level directory name, which is a guess, not a boundary. Module-comparing findings are " +
-                    "withheld rather than guessed. $hintSentence"
-            trust == PARTIAL ->
-                "${pct(coverage)} of files sit under a declared module root; $fallback fell back to a top-level " +
-                    "directory name, so some \"different modules\" claims may just be different folders. $hintSentence"
-            else -> "${pct(coverage)} of files resolve to a module root the repository itself declares."
+            !enabled && detection.declaredFiles == 0 ->
+                "No module root was detected at all, so every \"module\" here is a top-level directory name — " +
+                    "a guess, not a boundary. Module-comparing findings are withheld rather than guessed. $hintSentence"
+            !enabled ->
+                "Only ${detection.declaredModuleCount} module was declared by the repository itself, so no pair can " +
+                    "cross a boundary cochange can vouch for. If this repository does have modules cochange didn't " +
+                    "detect, $hint."
+            trust == DECLARED ->
+                "${pct(coverage)} of files resolve to a module root the repository itself declares, across " +
+                    "${detection.declaredModuleCount} declared modules."
+            else ->
+                "${pct(coverage)} of files sit under a declared module root (${detection.declaredModuleCount} declared " +
+                    "modules); $fallback fell back to a top-level directory name. Findings are reported only for files " +
+                    "on both sides of a declared boundary — a pair resting on a guessed folder is withheld " +
+                    "individually, not counted here. $hintSentence"
         }
-        val enabled = trust != GUESSED && detection.moduleCount >= 2
         return ModuleDetectionReport(
             methods = detection.methods.map { it.label },
             coverage = round2(coverage),
             moduleCount = detection.moduleCount,
+            declaredModuleCount = detection.declaredModuleCount,
             declaredFiles = detection.declaredFiles,
             fallbackFiles = fallback,
             totalFiles = detection.totalFiles,

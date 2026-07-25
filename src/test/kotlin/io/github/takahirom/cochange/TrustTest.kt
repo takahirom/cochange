@@ -52,15 +52,27 @@ class ModuleProvenanceTest {
 }
 
 class ModuleGateTest {
-    private fun detection(declared: Int, fallback: Int, modules: Int) = ModuleDetection(
+    private fun detection(declared: Int, fallback: Int, modules: Int, declaredModules: Int = modules) = ModuleDetection(
         totalFiles = declared + fallback,
         bySource = mapOf(ModuleSource.BUILD_FILE to declared, ModuleSource.TOP_LEVEL_DIR to fallback),
         moduleCount = modules,
+        declaredModuleCount = declaredModules,
     )
 
     @Test
-    fun `low coverage withholds module findings instead of merely warning`() {
-        val report = ModuleGate.report(detection(declared = 10, fallback = 90, modules = 12))
+    fun `trust reports coverage, and coverage alone no longer decides eligibility`() {
+        // 10% coverage across two declared modules: the repo-level answer is "a
+        // boundary exists", and whether any particular pair rests on it is checked
+        // per finding. Coverage still labels how much of the repo is guesswork.
+        val report = ModuleGate.report(detection(declared = 10, fallback = 90, modules = 12, declaredModules = 2))
+        assertEquals(ModuleGate.GUESSED, report.trust)
+        assertTrue(report.moduleFindingsEnabled, "two declared modules do exist; the per-claim check does the rest")
+        assertTrue(report.note.contains("withheld individually"), report.note)
+    }
+
+    @Test
+    fun `nothing declared means nothing to compare`() {
+        val report = ModuleGate.report(detection(declared = 0, fallback = 100, modules = 12, declaredModules = 0))
         assertEquals(ModuleGate.GUESSED, report.trust)
         assertFalse(report.moduleFindingsEnabled)
         assertTrue(report.note.contains("withheld"), report.note)
@@ -74,11 +86,11 @@ class ModuleGateTest {
     }
 
     @Test
-    fun `partial coverage still runs, but says which claims may be folder names`() {
-        val report = ModuleGate.report(detection(declared = 70, fallback = 30, modules = 8))
+    fun `partial coverage says the guessed pairs are dropped one by one`() {
+        val report = ModuleGate.report(detection(declared = 70, fallback = 30, modules = 8, declaredModules = 3))
         assertEquals(ModuleGate.PARTIAL, report.trust)
         assertTrue(report.moduleFindingsEnabled)
-        assertTrue(report.note.contains("different folders"), report.note)
+        assertTrue(report.note.contains("declared boundary"), report.note)
     }
 
     @Test
@@ -86,7 +98,7 @@ class ModuleGateTest {
         val report = ModuleGate.report(detection(declared = 100, fallback = 0, modules = 1))
         assertEquals(ModuleGate.DECLARED, report.trust, "provenance is perfect; enablement is a separate question")
         assertFalse(report.moduleFindingsEnabled)
-        assertTrue(report.note.contains("one module"), report.note)
+        assertTrue(report.note.contains("1 module was declared"), report.note)
     }
 }
 
@@ -122,6 +134,53 @@ class DetectorGateTest {
             setOf("boundary_mismatch", "unstable_hub"),
             run.skipped.map { it.type }.toSet(),
             "a withheld detector must be reported, or its absence reads as 'nothing found'",
+        )
+    }
+
+    /**
+     * A repository-wide coverage threshold answered the wrong question. Coverage is a
+     * file population; a boundary_mismatch's claim is about two particular files. So
+     * a half-declared repo used to admit a pair whose endpoints were both guesses,
+     * and withhold a pair whose endpoints were both declared.
+     */
+    @Test
+    fun `a pair resting on guessed folders is dropped even where the repo passes`() {
+        // Two real Gradle modules plus two undeclared legacy folders, with equally
+        // strong co-change in both pairs. The detector runs, and must report the
+        // declared pair while dropping the guessed one — a decision no repository-wide
+        // threshold can make, since it admits or withholds both together.
+        val head = setOf(
+            "app/build.gradle.kts", "app/A.kt",
+            "core/build.gradle.kts", "core/B.kt",
+            "legacyA/X.kt", "legacyB/Y.kt",
+        )
+        val context = AnalysisContext(history("app", "core") + history("legacyA", "legacyB"), Boundaries(head), head)
+        val run = Analyzer().run(context)
+        assertTrue(run.moduleDetection.moduleFindingsEnabled, "two modules are declared")
+        val mismatches = run.findings.filter { it.type == "boundary_mismatch" }.flatMap { it.files }.toSet()
+        assertTrue("app/A.kt" in mismatches, "the declared pair is reported: $mismatches")
+        assertTrue(
+            "legacyA/X.kt" !in mismatches && "legacyB/Y.kt" !in mismatches,
+            "both endpoints are guessed folders, so that claim is not made: $mismatches",
+        )
+    }
+
+    @Test
+    fun `a declared pair survives a repo full of undeclared files`() {
+        // Two declared modules, swamped by 51% fallback files. The old global gate
+        // withheld this finding although both of its endpoints have exact provenance.
+        val head = setOf(
+            "app/build.gradle.kts", "app/A.kt",
+            "core/build.gradle.kts", "core/B.kt",
+        ) + (1..60).map { "misc$it/file$it.txt" }
+        val changes = history("app", "core") +
+            (1..60).map { LogicalChange(listOf(commit("m$it", listOf("misc$it/file$it.txt")))) }
+        val context = AnalysisContext(changes, Boundaries(head), head)
+        val run = Analyzer().run(context)
+        assertTrue(run.moduleDetection.coverage < 0.5, "coverage is ${run.moduleDetection.coverage}")
+        assertTrue(
+            run.findings.any { it.type == "boundary_mismatch" },
+            "both endpoints are declared, so the claim stands: ${run.findings.map { it.type }}",
         )
     }
 }
