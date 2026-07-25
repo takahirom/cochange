@@ -149,4 +149,5 @@ data class AnalysisWarning(
 data class SkippedDetector(
     val type: String,
     val reason: String,
+    val tier: String = EvidenceTier.DERIVED,
 )

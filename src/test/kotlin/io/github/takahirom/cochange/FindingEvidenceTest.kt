@@ -46,9 +46,13 @@ class FindingEvidenceTest {
     @Test
     fun `the ranking score is in the output, not only in the list order`() {
         val findings = analyze().filter { it.type == "boundary_mismatch" }
-        assertTrue(findings.all { it.evidence?.interest != null })
+        assertTrue(findings.all { it.ranking != null }, "boundary_mismatch publishes its ranking")
+        assertTrue(
+            findings.all { it.ranking!!.tier == EvidenceTier.INTERPRETATION },
+            "the ranking is a judgement call and must not be labelled evidence",
+        )
         assertEquals(
-            findings.sortedByDescending { it.evidence!!.interest!! }.map { it.id },
+            findings.sortedByDescending { it.ranking!!.interest }.map { it.id },
             findings.map { it.id },
             "list order must be reproducible from the published score",
         )
@@ -68,7 +72,7 @@ class FindingEvidenceTest {
     @Test
     fun `a predictable name pairing is reported as such instead of only being demoted`() {
         val f = analyze().single { "Checkout.kt" in it.summary && it.type == "boundary_mismatch" }
-        assertEquals(0.0, f.evidence!!.nameSimilarity, "Checkout.kt and Pricing.kt share no token")
+        assertEquals(0.0, f.ranking!!.nameSimilarity, "Checkout.kt and Pricing.kt share no token")
     }
 
     @Test

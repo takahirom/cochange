@@ -1,8 +1,13 @@
 package io.github.takahirom.cochange
 
+import com.github.ajalt.clikt.testing.test
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import java.io.File
+import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
@@ -40,9 +45,17 @@ class JsonContractTest {
         assertEquals(EvidenceTier.INTERPRETATION, obj["tier"]!!.jsonPrimitive.content)
         val evidence = obj["evidence"]!!.jsonObject
         assertEquals(EvidenceTier.EVIDENCE, evidence["tier"]!!.jsonPrimitive.content)
-        for (key in listOf("support", "sampleSize", "sampleMeaning", "ratio", "evidenceStrength", "interest")) {
+        for (key in listOf("support", "sampleSize", "sampleMeaning", "ratio", "evidenceStrength")) {
             assertTrue(key in evidence, "$key must be in the JSON, not only in the ranking: $encoded")
         }
+        // The ranking is a separate block: it is interpretation, and labelling
+        // `interest` as evidence invited exactly the wrong reading.
+        val ranking = obj["ranking"]!!.jsonObject
+        assertEquals(EvidenceTier.INTERPRETATION, ranking["tier"]!!.jsonPrimitive.content)
+        for (key in listOf("interest", "nameSimilarity")) {
+            assertTrue(key in ranking, "$key must be in the JSON: $encoded")
+        }
+        assertTrue("interest" !in evidence, "the ranking heuristic must not sit in the evidence block")
     }
 
     @Test
@@ -73,5 +86,76 @@ class JsonContractTest {
         )
         assertEquals(1, old.schemaVersion, "an unversioned snapshot must read as v1, not as current")
         assertTrue(SCHEMA_VERSION > 1)
+    }
+}
+
+/**
+ * "Every `--json` output carries the envelope" was a README claim, not a fact:
+ * `metrics --json` and `compare --json` had ad-hoc headers with no schema version,
+ * no pinned options, and no module provenance — so a consumer could not see that a
+ * locality score rested on guessed folders.
+ */
+class EnvelopeContractTest {
+    private val repo = File.createTempFile("cochange-envelope", "").apply { delete(); mkdirs() }
+
+    @AfterTest
+    fun cleanup() {
+        repo.deleteRecursively()
+    }
+
+    private fun git(vararg args: String) = GitLog.runGit(repo, args.toList())
+
+    private fun initRepo() {
+        git("init", "-q", "-b", "main")
+        git("config", "user.email", "t@example.com")
+        git("config", "user.name", "T")
+        for (i in 1..6) {
+            File(repo, "app/build.gradle.kts").apply { parentFile.mkdirs() }.writeText("// app")
+            File(repo, "core/build.gradle.kts").apply { parentFile.mkdirs() }.writeText("// core")
+            File(repo, "app/A.kt").writeText("a$i\n")
+            File(repo, "core/B.kt").writeText("b$i\n")
+            git("add", "-A")
+            git("-c", "commit.gpgsign=false", "commit", "-q", "-m", "change $i")
+        }
+    }
+
+    private fun envelopeOf(stdout: String): JsonObject =
+        reader.parseToJsonElement(stdout).jsonObject["context"]!!.jsonObject
+
+    @Test
+    fun `pairs, clusters, metrics and compare all carry the same envelope`() {
+        initRepo()
+        val outputs = mapOf(
+            "pairs" to Pairs().test(listOf(repo.path, "--min-support", "1", "--json")),
+            "clusters" to ClustersCommand().test(listOf(repo.path, "--min-support", "1", "--json")),
+            "metrics" to MetricsCommand().test(listOf(repo.path, "--json")),
+            "compare" to CompareCommand().test(
+                listOf(repo.path, "--baseline", "365 days ago", "--recent", "30 days ago", "--min-count", "1", "--json"),
+            ),
+        )
+        for ((name, result) in outputs) {
+            assertEquals(0, result.statusCode, "$name failed: ${result.output}")
+            val context = envelopeOf(result.stdout)
+            for (key in listOf("schemaVersion", "repo", "headCommit", "requestedOptions", "options", "changeUnit", "moduleDetection", "warnings", "tiers")) {
+                assertTrue(key in context, "$name's envelope is missing $key: ${result.stdout.take(300)}")
+            }
+        }
+    }
+
+    @Test
+    fun `a pair separates its counted numbers from its inferred structure`() {
+        initRepo()
+        val result = Pairs().test(listOf(repo.path, "--min-support", "1", "--json"))
+        assertEquals(0, result.statusCode, result.output)
+        val pair = reader.parseToJsonElement(result.stdout).jsonObject["pairs"]!!.jsonArray.first().jsonObject
+        assertEquals(EvidenceTier.EVIDENCE, pair["evidence"]!!.jsonObject["tier"]!!.jsonPrimitive.content)
+        val derived = pair["derived"]!!.jsonObject
+        assertEquals(EvidenceTier.DERIVED, derived["tier"]!!.jsonPrimitive.content)
+        // Provenance per endpoint: a module name alone cannot say whether it is real.
+        assertTrue("moduleADeclared" in derived && "moduleBDeclared" in derived, "was $derived")
+    }
+
+    private companion object {
+        val reader = kotlinx.serialization.json.Json { ignoreUnknownKeys = true }
     }
 }

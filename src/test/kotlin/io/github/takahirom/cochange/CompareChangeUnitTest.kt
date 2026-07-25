@@ -80,7 +80,7 @@ class CompareChangeUnitTest {
         assertEquals(0, result.statusCode, result.output)
         val report = Json.decodeFromString(Compare.CompareReport.serializer(), result.stdout)
 
-        assertEquals("merge", report.changeUnit, "the baseline's unit must govern both windows")
+        assertEquals("merge", report.context.changeUnit, "the baseline's unit must govern both windows")
         assertEquals(
             "author-window", report.recentWindowAloneWouldUse,
             "the recent window's own choice is published so a reader can see the history changed shape",

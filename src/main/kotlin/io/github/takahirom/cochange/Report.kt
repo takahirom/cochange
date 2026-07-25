@@ -53,11 +53,24 @@ data class RunContext(
     }
 }
 
-/** One co-change pair as evidence: counted numbers plus the derived module labels. */
+/**
+ * One co-change pair, with the counted numbers separated from the structure
+ * cochange inferred about the two files.
+ *
+ * They used to sit side by side under a single `tier: "evidence"`, so a guessed
+ * `moduleA: "src"` looked exactly as solid as `together: 14`.
+ */
 @Serializable
 data class PairReport(
     val a: String,
     val b: String,
+    val evidence: PairEvidence,
+    val derived: PairDerived,
+)
+
+/** Counted from commits, plus arithmetic on those counts. Nothing inferred. */
+@Serializable
+data class PairEvidence(
     val together: Int,
     val changesA: Int,
     val changesB: Int,
@@ -68,12 +81,26 @@ data class PairReport(
     val jaccard: Double,
     /** Sample-corrected strength: what separates 20-of-25 from 5-of-5, which both score 1.0 on ratio alone. */
     val evidenceStrength: Double,
-    val nameSimilarity: Double,
+    val tier: String = EvidenceTier.EVIDENCE,
+)
+
+/**
+ * Inferred about the pair: which module each file belongs to, whether that module
+ * was declared by the repository or guessed from a directory name, the category,
+ * and how much the two names alone already predicted the coupling.
+ */
+@Serializable
+data class PairDerived(
     val category: String,
     val moduleA: String,
     val moduleB: String,
+    /** False when [moduleA] is a top-level directory name rather than a declared root. */
+    val moduleADeclared: Boolean,
+    val moduleBDeclared: Boolean,
     val sameModule: Boolean,
-    val tier: String = EvidenceTier.EVIDENCE,
+    /** 0..1 token overlap of the two basenames. High means the names predicted this. */
+    val nameSimilarity: Double,
+    val tier: String = EvidenceTier.DERIVED,
 )
 
 @Serializable
@@ -187,17 +214,23 @@ internal fun pairReport(p: AnalysisContext.PairStat, context: AnalysisContext): 
     return PairReport(
         a = p.a,
         b = p.b,
-        together = p.together,
-        changesA = p.countA,
-        changesB = p.countB,
-        confidence = round2(p.confidence),
-        reverse = round2(p.reverse),
-        jaccard = round2(p.jaccard),
-        evidenceStrength = round2(Surprise.evidenceStrength(p.together, p.countA, p.countB)),
-        nameSimilarity = round2(Surprise.nameSimilarity(p.a, p.b)),
-        category = context.categoryOfPair(p.a, p.b),
-        moduleA = modA,
-        moduleB = modB,
-        sameModule = modA == modB,
+        evidence = PairEvidence(
+            together = p.together,
+            changesA = p.countA,
+            changesB = p.countB,
+            confidence = round2(p.confidence),
+            reverse = round2(p.reverse),
+            jaccard = round2(p.jaccard),
+            evidenceStrength = round2(Surprise.evidenceStrength(p.together, p.countA, p.countB)),
+        ),
+        derived = PairDerived(
+            category = context.categoryOfPair(p.a, p.b),
+            moduleA = modA,
+            moduleB = modB,
+            moduleADeclared = context.moduleIsDeclared(p.a),
+            moduleBDeclared = context.moduleIsDeclared(p.b),
+            sameModule = modA == modB,
+            nameSimilarity = round2(Surprise.nameSimilarity(p.a, p.b)),
+        ),
     )
 }

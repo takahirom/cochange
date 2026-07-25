@@ -101,18 +101,17 @@ object Compare {
     private val json = Json { prettyPrint = true; encodeDefaults = true }
 
     fun encode(
-        repo: String, branch: String, shallow: Boolean, minCount: Int, category: String?,
+        context: RunContext, minCount: Int, category: String?,
         baseline: Window, recent: Window, comparison: Comparison,
-        changeUnit: String, changeUnitReason: String, recentWindowAloneWouldUse: String,
+        recentWindowAloneWouldUse: String,
     ): String {
         val moves = comparison.moves
         val s = summarize(moves)
         return json.encodeToString(
             CompareReport.serializer(),
             CompareReport(
-                repo = repo, branch = branch, shallow = shallow, minCount = minCount, category = category,
+                context = context, minCount = minCount, category = category,
                 baseline = baseline, recent = recent,
-                changeUnit = changeUnit, changeUnitReason = changeUnitReason,
                 recentWindowAloneWouldUse = recentWindowAloneWouldUse,
                 recentIsInsideBaseline = recentIsInsideBaseline(baseline, recent),
                 heating = s.heating, cooling = s.cooling,
@@ -145,21 +144,19 @@ object Compare {
 
     @Serializable
     data class CompareReport(
-        val schemaVersion: Int = SCHEMA_VERSION,
-        val repo: String,
-        val branch: String,
-        val shallow: Boolean,
+        /**
+         * The shared envelope, describing the BASELINE window's setup — including the
+         * single change unit both windows were counted in (`context.changeUnit`).
+         */
+        val context: RunContext,
         /** Minimum participation in either window for a file to be listed — the summary scales with it. */
         val minCount: Int,
         val category: String?,
         val baseline: Window,
         val recent: Window,
-        /** The unit both windows were counted in — never resolved per window, or the rates would not be comparable. */
-        val changeUnit: String,
-        val changeUnitReason: String,
         /**
          * What `auto` would have chosen for the recent window on its own. When it differs
-         * from [changeUnit], the history's shape changed mid-window: rates can move
+         * from `context.changeUnit`, the history's shape changed mid-window: rates can move
          * because the granularity fits the recent window worse, not because a file
          * became more central.
          */

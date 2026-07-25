@@ -144,12 +144,7 @@ object Metrics {
     fun encode(setup: AnalysisSetup, m: RepoMetrics): String = json.encodeToString(
         MetricsReport.serializer(),
         MetricsReport(
-            repo = setup.repo.path,
-            branch = setup.options.branch ?: "HEAD",
-            headCommit = setup.headCommit,
-            since = setup.options.since,
-            changeUnit = setup.changeUnitName,
-            shallow = setup.shallow,
+            context = RunContext.of(setup),
             windowYears = m.windowYears,
             multiFileUnits = m.multiFileUnits,
             effectiveModules = m.effectiveModules,
@@ -166,14 +161,16 @@ object Metrics {
     )
 }
 
+/**
+ * Every score here is computed over module assignments, so it depends on the same
+ * boundary detection the findings do — `context.moduleDetection` is not decoration.
+ * At `trust=guessed` these numbers describe top-level directory names, not modules,
+ * and must not be read as "this repo has good structure".
+ */
 @Serializable
 data class MetricsReport(
-    val repo: String,
-    val branch: String,
-    val headCommit: String,
-    val since: String?,
-    val changeUnit: String,
-    val shallow: Boolean,
+    /** Pinned conditions, module provenance, warnings, tier meanings — the shared envelope. */
+    val context: RunContext,
     val windowYears: Double,
     val multiFileUnits: Int,
     val effectiveModules: Double,
@@ -186,6 +183,8 @@ data class MetricsReport(
     val hubFiles: List<String>,
     val boundaryHotspots: Int,
     val topHotspot: HotspotRef?,
+    /** Derived: every score is a function of the module partition, not a raw count. */
+    val tier: String = EvidenceTier.DERIVED,
 )
 
 @Serializable

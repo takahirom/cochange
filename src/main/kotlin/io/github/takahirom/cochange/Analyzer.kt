@@ -201,6 +201,8 @@ class BoundaryMismatchDetector(
                 sampleMeaning = "change units touching ${name(rarer)}, the rarer of the two files",
                 ratio = round2(confidence),
                 evidenceStrength = round2(Surprise.evidenceStrength(p.together, p.countA, p.countB)),
+            ),
+            ranking = FindingRanking(
                 interest = round2(Surprise.interest(p)),
                 nameSimilarity = round2(Surprise.nameSimilarity(p.a, p.b)),
             ),

@@ -332,8 +332,19 @@ class MetricsCommand : CliktCommand(
             echo("                         top hotspot: $la x $lb — ~$perYear double-edits/year")
         }
         echo("")
+        // Every score above is a function of the module partition. When that partition
+        // is directory names, "rich structure" would be a statement about folders —
+        // the same reason the module findings are withheld.
+        val modules = ModuleGate.report(setup.context.moduleDetection)
         val adjusted = m.adjustedLocality
-        if (adjusted != null) {
+        if (adjusted != null && !modules.moduleFindingsEnabled) {
+            echo(
+                "reading: withheld — these scores are computed over ${modules.declaredModuleCount} declared " +
+                    "module${if (modules.declaredModuleCount == 1) "" else "s"}, so the partition above is mostly " +
+                    "directory names. Declare roots with --module-root and re-run before reading them as structure.",
+            )
+            echo("")
+        } else if (adjusted != null) {
             val richStructure = m.effectiveModules >= 3
             val respected = adjusted >= 0.5
             val reading = when {
@@ -405,12 +416,10 @@ class CompareCommand : CliktCommand(
 
         if (asJson) {
             echo(Compare.encode(
-                repo = repo.path, branch = history.branch ?: "HEAD", shallow = baseSetup.shallow,
+                context = RunContext.of(baseSetup),
                 minCount = minCount, category = category,
                 baseline = baseWindow, recent = recentWindow,
                 comparison = computed.copy(moves = moves),
-                changeUnit = baseSetup.changeUnitName,
-                changeUnitReason = baseSetup.changeUnitReason,
                 recentWindowAloneWouldUse = recentAlone,
             ))
             return

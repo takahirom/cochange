@@ -76,6 +76,8 @@ data class Finding(
     val tier: String = EvidenceTier.INTERPRETATION,
     /** The counted numbers underneath, with the denominator spelled out. */
     val evidence: FindingEvidence? = null,
+    /** How this finding was ranked, and against what — interpretation, not evidence. */
+    val ranking: FindingRanking? = null,
     /** Rough effort to act on this finding (none/low/medium/high), so it can be read for ROI, not just impact. Empty when not estimated. */
     val effort: String = "",
     val detail: FindingDetail,
@@ -146,9 +148,10 @@ object FileCategory {
  * `metrics: Map<String, String>` (whose keys embedded file paths) could not be.
  *
  * [ratio] alone is misleading on small samples: 5 out of 5 is 1.0 and means very
- * little. [evidenceStrength] and [interest] are the sample-corrected numbers the
- * ranking actually uses, exposed here so a consumer can apply the same judgement
- * instead of trusting list order.
+ * little, so [evidenceStrength] is the sample-corrected figure to compare on.
+ * The ranking heuristic lives in [FindingRanking], not here — it used to sit in
+ * this block under `tier: "evidence"`, which is exactly the confusion the tiers
+ * exist to prevent.
  */
 @Serializable
 data class FindingEvidence(
@@ -160,13 +163,31 @@ data class FindingEvidence(
     val sampleMeaning: String,
     /** [support] / [sampleSize]. */
     val ratio: Double,
-    /** Sample-corrected pair strength (Wilson-bounded Jaccard × log support). Null when the finding isn't about one pair. */
+    /**
+     * Sample-corrected strength (Wilson-bounded ratio × log support), over this
+     * finding type's own denominator. Comparable between findings of the same type,
+     * not across types.
+     */
     val evidenceStrength: Double? = null,
-    /** The score that ordered these findings. Null when this type was ordered by something else. */
-    val interest: Double? = null,
-    /** 0..1 name overlap. High means the coupling was predictable from the names alone. */
-    val nameSimilarity: Double? = null,
     val tier: String = EvidenceTier.EVIDENCE,
+)
+
+/**
+ * Why a finding sits where it does in the list. Interpretation, not evidence: it
+ * weighs counted strength against how much the file names alone already predicted
+ * the coupling, and that weighting is a judgement call. Both inputs are here so a
+ * consumer can re-rank on [FindingEvidence.evidenceStrength] alone.
+ *
+ * Only `boundary_mismatch` has this — the other types have no pair of names to
+ * compare, and the fields are absent rather than faked.
+ */
+@Serializable
+data class FindingRanking(
+    /** The score that ordered the list: evidenceStrength x (1 - 0.5 x nameSimilarity). */
+    val interest: Double,
+    /** 0..1 token overlap of the two basenames. High means the names predicted this. */
+    val nameSimilarity: Double,
+    val tier: String = EvidenceTier.INTERPRETATION,
 )
 
 @Serializable
@@ -184,6 +205,12 @@ data class FindingDetail(
     val metrics: Map<String, String> = emptyMap(),
     /** For split_candidate: the independent partner clusters, in full, with their support and active period. */
     val groups: List<SplitGroup> = emptyList(),
+    /**
+     * Mixed by construction: `observation` restates counts, `interpretations` and
+     * `counterSignals` are readings of them. Labelled interpretation because that is
+     * the weakest thing in the block, and a block is only as solid as its softest field.
+     */
+    val tier: String = EvidenceTier.INTERPRETATION,
 )
 
 /**
@@ -221,7 +248,7 @@ data class SplitGroup(
      * Date of the last one. [firstSeen]..[lastSeen] are bounds, not an interval of
      * continuous activity — the group may have been idle for most of it.
      */
-    val lastSeen: String,
+    val lastSeen: String,    val tier: String = EvidenceTier.DERIVED,
 )
 
 @Serializable
