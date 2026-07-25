@@ -174,9 +174,15 @@ class Boundaries(headFiles: Set<String>, moduleRootGlobs: List<String> = emptyLi
     }
 
     private fun covers(root: String, source: ModuleSource, path: String, dir: String): Boolean = when (source) {
+        // A Go package is exactly one directory: every directory holding .go files is
+        // itself a package, so exact matching is complete.
         ModuleSource.GO_PACKAGE -> dir == root && path.endsWith(".go") && !isGoIgnored(path)
+        // A Python package is not. A subdirectory without __init__.py is not a package of
+        // its own, and its modules belong to the nearest ancestor that is — matching
+        // exactly meant `src/flask/sansio/app.py` fell all the way back to the root
+        // module and appeared to cross a boundary with its own package's files.
         ModuleSource.PYTHON_PACKAGE ->
-            dir == root && PYTHON_EXTENSIONS.any { path.endsWith(it) }
+            PYTHON_EXTENSIONS.any { path.endsWith(it) } && (dir == root || dir.startsWith("$root/"))
         else -> root.isNotEmpty() && (dir == root || dir.startsWith("$root/"))
     }
 

@@ -567,3 +567,32 @@ class DocumentationEffortTest {
         assertEquals("generated", estimate.kind)
     }
 }
+
+/**
+ * A Python subdirectory without `__init__.py` is not a package of its own; its modules
+ * belong to the nearest ancestor that is. Matching a package to exactly one directory
+ * sent those files to the root module, so they appeared to cross a boundary with the
+ * very package they are part of.
+ */
+class PythonPackageNestingTest {
+    @Test
+    fun `a non-package subdirectory belongs to its nearest enclosing package`() {
+        val files = setOf(
+            "pyproject.toml",
+            "src/flask/__init__.py", "src/flask/app.py", "src/flask/testing.py",
+            "src/flask/sansio/app.py",
+            "src/flask/json/__init__.py", "src/flask/json/provider.py",
+        )
+        val boundaries = Boundaries(files)
+        assertEquals(
+            "src/flask", boundaries.moduleOf("src/flask/sansio/app.py"),
+            "sansio has no __init__.py, so its modules are part of src/flask",
+        )
+        assertEquals(
+            boundaries.moduleOf("src/flask/testing.py"), boundaries.moduleOf("src/flask/sansio/app.py"),
+            "these must not look like two modules changing together",
+        )
+        // A real subpackage still wins, because the nearest root does.
+        assertEquals("src/flask/json", boundaries.moduleOf("src/flask/json/provider.py"))
+    }
+}
