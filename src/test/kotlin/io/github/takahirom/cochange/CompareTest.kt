@@ -22,6 +22,17 @@ class CompareTest {
     }
 
     @Test
+    fun `summary counts movers in each direction`() {
+        val head = setOf("A.kt", "B.kt", "C.kt", "D.kt")
+        val baseline = AnalysisContext(List(10) { LogicalChange(listOf(commit("A.kt", "B.kt"))) }, Boundaries(head), head)
+        val recent = AnalysisContext(List(10) { LogicalChange(listOf(commit("C.kt", "D.kt"))) }, Boundaries(head), head)
+        val summary = Compare.summarize(Compare.of(baseline, recent, minCount = 3))
+        assertTrue(summary.heating >= 1)
+        assertTrue(summary.cooling >= 1)
+        assertTrue(summary.totalAbsShift > 0.0)
+    }
+
+    @Test
     fun `files below min-count in both windows are dropped`() {
         val head = setOf("A.kt", "B.kt")
         val ctx = AnalysisContext(List(2) { LogicalChange(listOf(commit("A.kt", "B.kt"))) }, Boundaries(head), head)

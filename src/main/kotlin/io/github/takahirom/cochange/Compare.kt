@@ -1,5 +1,9 @@
 package io.github.takahirom.cochange
 
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.Json
+import kotlin.math.abs
+
 /**
  * Compares how central each file is (its share of multi-file changes) between a
  * longer baseline window and a shorter recent one. A file that was a big hub
@@ -47,4 +51,60 @@ object Compare {
             )
         }
     }
+
+    /** A single weekly-trackable summary: how many files moved each way and how much overall. */
+    data class Summary(val heating: Int, val cooling: Int, val totalAbsShift: Double)
+
+    fun summarize(moves: List<Move>) = Summary(
+        heating = moves.count { it.delta > 0 },
+        cooling = moves.count { it.delta < 0 },
+        totalAbsShift = moves.sumOf { abs(it.delta) },
+    )
+
+    private val json = Json { prettyPrint = true }
+
+    fun encode(
+        repo: String, branch: String, baseline: String, recent: String,
+        baselineUnits: Int, recentUnits: Int, category: String?, moves: List<Move>,
+    ): String {
+        val s = summarize(moves)
+        return json.encodeToString(
+            CompareReport.serializer(),
+            CompareReport(
+                repo = repo, branch = branch, baseline = baseline, recent = recent,
+                baselineUnits = baselineUnits, recentUnits = recentUnits, category = category,
+                heating = s.heating, cooling = s.cooling, totalAbsShift = round4(s.totalAbsShift),
+                moves = moves.sortedByDescending { abs(it.delta) }.map {
+                    MoveJson(it.file, round4(it.baselineRate), round4(it.recentRate), round4(it.delta), it.baselineCount, it.recentCount)
+                },
+            ),
+        )
+    }
+
+    private fun round4(v: Double) = kotlin.math.round(v * 10000) / 10000
+
+    @Serializable
+    data class CompareReport(
+        val repo: String,
+        val branch: String,
+        val baseline: String,
+        val recent: String,
+        val baselineUnits: Int,
+        val recentUnits: Int,
+        val category: String?,
+        val heating: Int,
+        val cooling: Int,
+        val totalAbsShift: Double,
+        val moves: List<MoveJson>,
+    )
+
+    @Serializable
+    data class MoveJson(
+        val file: String,
+        val baselineRate: Double,
+        val recentRate: Double,
+        val delta: Double,
+        val baselineCount: Int,
+        val recentCount: Int,
+    )
 }

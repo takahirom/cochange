@@ -153,6 +153,8 @@ cooling down — was more central, quieter lately:
 
 Each rate is the file's share of that window's multi-file changes. `--baseline`/`--recent` take `30d`-style shorthand or any git `--since` expression (including absolute dates).
 
+For a weekly cadence, `compare --json` (and `metrics --json`) give machine-readable output. `compare --json` includes a summary — `heating`, `cooling`, and `totalAbsShift` (the summed change in participation share) — plus every mover, so you can track a single "how much moved this week" number over time.
+
 ## How it works
 
 1. **Reconstructing change units** (`--change-unit`) — the goal is one PR = one change unit. Renames are normalized to the newest path, and bulk commits (formatters, mass renames) are dropped by file-count caps.

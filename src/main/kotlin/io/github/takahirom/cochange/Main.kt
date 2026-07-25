@@ -303,6 +303,7 @@ class CompareCommand : CliktCommand(
     private val minCount by option("--min-count", help = "Minimum participation in either window to be listed").int().restrictTo(min = 1).default(3)
     private val top by option("--top", help = "Number of movers to show per direction").int().restrictTo(min = 1).default(10)
     private val category by option("--category", help = "Only files in this category (source, config, build, docs, generated)")
+    private val asJson by option("--json", help = "Machine-readable output for weekly tracking").flag()
 
     override fun run() {
         val repo = File(path).canonicalFile
@@ -312,16 +313,26 @@ class CompareCommand : CliktCommand(
         val baseCtx = baseSetup.context
         val recentCtx = recentSetup.context
 
+        val moves = Compare.of(baseCtx, recentCtx, minCount)
+            .filter { category == null || recentCtx.categoryOf(it.file) == category || baseCtx.categoryOf(it.file) == category }
+
+        if (asJson) {
+            echo(Compare.encode(
+                repo = repo.path, branch = history.branch ?: "HEAD", baseline = baseline, recent = recent,
+                baselineUnits = baseCtx.changes.size, recentUnits = recentCtx.changes.size, category = category, moves = moves,
+            ))
+            return
+        }
+
         if (baseSetup.shallow) echo("WARNING: shallow clone — windows are truncated, so the comparison is biased.", err = true)
         echo("baseline: $baseline (${baseCtx.changes.size} units)   recent: $recent (${recentCtx.changes.size} units)" +
             if (category != null) "   category: $category" else "")
-
-        val moves = Compare.of(baseCtx, recentCtx, minCount)
-            .filter { category == null || recentCtx.categoryOf(it.file) == category || baseCtx.categoryOf(it.file) == category }
         if (moves.isEmpty()) {
             echo("No files reached --min-count ($minCount) in either window. Widen the windows or lower --min-count.")
             return
         }
+        val summary = Compare.summarize(moves)
+        echo("summary: ${summary.heating} heating, ${summary.cooling} cooling, total participation shift ${"%.0f".format(summary.totalAbsShift * 100)}%")
 
         fun pct(v: Double) = "%3.0f%%".format(v * 100)
         fun line(m: Compare.Move) = "  " + m.file.padEnd(52) +
