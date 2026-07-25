@@ -94,11 +94,12 @@ class Boundaries(headFiles: Set<String>, moduleRootGlobs: List<String> = emptyLi
         // is withheld — while the language's own unit, the package, is "the directory".
         // Python says the same thing with __init__.py. These are language rules, not
         // guesses about a layout, which is why they count as declared.
-        // Go ignores directories named testdata, and any path element starting with
-        // "_" or "." — a fixture directory is not a package, and two synchronized
-        // fixture updates must not become a boundary finding between "modules".
+        // The go command ignores directories named testdata or vendor, and any path
+        // element starting with "_" or "." — a fixture directory is not a package, and
+        // two synchronized fixture (or vendored dependency) updates must not become a
+        // boundary finding between "modules".
         fun goIgnored(dir: String) = dir.split('/')
-            .any { it == "testdata" || it.startsWith("_") || it.startsWith(".") }
+            .any { it == "testdata" || it == "vendor" || it.startsWith("_") || it.startsWith(".") }
         val fromGoPackages = headFiles
             .filter { it.endsWith(".go") }
             .map { it.substringBeforeLast('/', "") }

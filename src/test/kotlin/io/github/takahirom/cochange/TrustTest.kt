@@ -376,6 +376,23 @@ class LanguagePackagePrecisionTest {
     }
 
     @Test
+    fun `vendored dependencies are not packages of the repository`() {
+        // A dependency bump touches many vendored files at once; treating each vendored
+        // directory as a declared module turns that into cross-module findings.
+        val files = setOf("go.mod", "pkg/a/a.go", "vendor/github.com/x/y/y.go", "vendor/modules.txt")
+        val boundaries = Boundaries(files)
+        assertEquals(ModuleSource.GO_PACKAGE, boundaries.sourceOf("pkg/a/a.go"))
+        assertTrue(
+            boundaries.sourceOf("vendor/github.com/x/y/y.go") != ModuleSource.GO_PACKAGE,
+            "got ${boundaries.sourceOf("vendor/github.com/x/y/y.go")}",
+        )
+        assertEquals(
+            boundaries.moduleOf("vendor/modules.txt"), boundaries.moduleOf("vendor/github.com/x/y/y.go"),
+            "vendored files all belong to the module go.mod declares — no boundary between them",
+        )
+    }
+
+    @Test
     fun `a go package covers its own directory only, not its subtree`() {
         val files = setOf("go.mod", "pkg/a/a.go", "pkg/a/sub/b.go")
         val boundaries = Boundaries(files)
