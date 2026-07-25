@@ -58,6 +58,33 @@ class RoleExclusionViewTest {
         assertEquals(mapOf(FileRole.TEST to 1), run.hiddenByRole)
     }
 
+    /**
+     * The family projection rebuilds the context, and it used to rebuild it without
+     * the excluded roles — so `clusters --exclude-role` showed the files it had just
+     * reported as hidden.
+     */
+    @Test
+    fun `the family projection keeps hiding what the run hid`() {
+        val hidden = context(FileRole.TEST)
+        val projected = Families.project(
+            hidden,
+            Boundaries(head),
+            listOf(Families.Family("app/Checkout.kt", listOf("app/Checkout.kt", "core/Pricing.kt"))),
+        )
+        assertEquals(hidden.excludedRoles, projected.excludedRoles)
+        assertTrue(!projected.isVisible("app/CheckoutTest.kt"), "a hidden test must stay hidden after projection")
+    }
+
+    /** compare filtered on headFiles alone, so `--exclude-role test` always counted tests. */
+    @Test
+    fun `compare hides excluded roles from its participation rates`() {
+        val shown = Compare.of(context(), context(), minCount = 1).moves.map { it.file }
+        val hiddenRun = Compare.of(context(FileRole.TEST), context(FileRole.TEST), minCount = 1).moves.map { it.file }
+        assertTrue("app/CheckoutTest.kt" in shown, "sanity: the test file participates")
+        assertTrue("app/CheckoutTest.kt" !in hiddenRun, "an excluded role must not be listed: $hiddenRun")
+        assertTrue("app/Checkout.kt" in hiddenRun, "the visible files are still compared")
+    }
+
     @Test
     fun `with no roles excluded nothing is hidden and nothing is reported`() {
         val run = Analyzer(minSupport = 5, minConfidence = 0.6).run(context())

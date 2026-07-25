@@ -39,10 +39,15 @@ object Compare {
 
     /** file -> count of multi-file changes touching it, and the number of multi-file changes in the window. */
     private fun participation(context: AnalysisContext): Pair<Map<String, Int>, Int> {
-        val multiFile = context.changes.filter { it.files.size >= 2 }
+        // "Multi-file" has to mean multi-*visible*-file, or a change with one visible
+        // file and one hidden one inflates the denominator without ever contributing
+        // a pair to the numerator.
+        val multiFile = context.changes.filter { change -> change.files.count { context.isVisible(it) } >= 2 }
         val counts = HashMap<String, Int>()
         for (change in multiFile) {
-            for (file in change.files) if (file in context.headFiles) counts.merge(file, 1, Int::plus)
+            // isVisible, not just headFiles: --exclude-role has to hide files here too,
+            // or compare lists the tests the rest of the tool agreed to hide.
+            for (file in change.files) if (context.isVisible(file)) counts.merge(file, 1, Int::plus)
         }
         return counts to multiFile.size
     }
