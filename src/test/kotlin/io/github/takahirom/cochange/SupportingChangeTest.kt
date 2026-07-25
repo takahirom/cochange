@@ -94,7 +94,7 @@ class InspectSupportingChangeTest {
         val analyze = Analyze().test(listOf(repo.path, "--change-unit", "author-window", "--min-support", "5"))
         assertEquals(0, analyze.statusCode, analyze.output)
 
-        val findings = Findings().test(listOf(repo.path, "--json"))
+        val findings = Findings().test(listOf(repo.path, "--type", "boundary_mismatch", "--json"))
         assertEquals(0, findings.statusCode, findings.output)
         val id = Regex("\"id\"\\s*:\\s*\"(finding-\\d+)\"").find(findings.stdout)?.groupValues?.get(1)
         assertTrue(id != null, "expected a boundary_mismatch finding: ${findings.stdout.take(400)}")

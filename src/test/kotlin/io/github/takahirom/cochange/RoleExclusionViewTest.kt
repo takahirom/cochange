@@ -121,6 +121,33 @@ class AggregateScoresIgnoreRoleFilterTest {
         Boundaries(head), head, excludedRoles = roles.toSet(),
     )
 
+    /**
+     * `hubFreeRate` is null below six modules, so the fixture above asserts null == null for
+     * it. This one has enough declared modules for a hub to exist AND makes the hub a test
+     * file, which is the case that used to raise the rate when the filter hid it.
+     */
+    @Test
+    fun `hiding the hub itself does not move the hub-free rate`() {
+        val modules = (1..8).map { "m$it" }
+        val hubHead = setOf("app/build.gradle.kts", "app/SharedTest.kt") +
+            modules.flatMap { listOf("$it/build.gradle.kts", "$it/F$it.kt") }
+        // 24 multi-file units, every one dragging in the test hub across 8 modules.
+        val hubChanges = (1..24).map { i ->
+            val m = modules[i % modules.size]
+            LogicalChange(listOf(commit("app/SharedTest.kt", "$m/F${m.removePrefix("m")}.kt")))
+        }
+        fun ctx(vararg roles: String) =
+            AnalysisContext(hubChanges, Boundaries(hubHead), hubHead, excludedRoles = roles.toSet())
+
+        val shown = Metrics.compute(ctx())
+        val hidden = Metrics.compute(ctx(FileRole.TEST))
+        assertTrue(shown.hubFreeRate != null, "the fixture must actually produce a hub: ${shown.hubFiles}")
+        assertTrue("app/SharedTest.kt" in shown.hubFiles, "the hub is the test file: ${shown.hubFiles}")
+        assertEquals(shown.hubFreeRate, hidden.hubFreeRate, "hiding the hub raised the rate")
+        assertEquals(shown.hubCount, hidden.hubCount, "the rate counted the same hubs")
+        assertTrue(hidden.hubFiles.isEmpty(), "...and the listing drops it")
+    }
+
     @Test
     fun `hiding tests does not move a single metric`() {
         val shown = Metrics.compute(context())

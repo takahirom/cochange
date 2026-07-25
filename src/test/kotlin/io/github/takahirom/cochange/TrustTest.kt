@@ -813,3 +813,21 @@ class MixedLanguageRootTest {
         assertEquals("services/pkg", boundaries.moduleOf("services/pkg/app.py"))
     }
 }
+
+/**
+ * `moduleRootFileNames` is documented as a subset of `buildNames`, and the two disagreeing
+ * is what made `pyproject.toml` a module root in one place and a config file in the other.
+ * Documentation did not stop that, so this checks it.
+ */
+class BuildFileCatalogueTest {
+    @Test
+    fun `every module-root marker is also categorised as a build file`() {
+        for (name in FileCategory.moduleRootFileNames) {
+            assertTrue(
+                name.lowercase() in FileCategory.buildNames,
+                "$name marks a module root but is not in buildNames, so FileCategory.of() will not call it BUILD",
+            )
+            assertEquals(FileCategory.BUILD, FileCategory.of("some/dir/$name"), name)
+        }
+    }
+}

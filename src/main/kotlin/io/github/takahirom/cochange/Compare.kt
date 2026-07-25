@@ -65,10 +65,9 @@ object Compare {
     )
 
     /**
-     * Files whose participation is worth comparing (reached [minCount] in either
-     * window), with each window's participation rate.
-     */
-    /**
+     * Files whose participation is worth comparing — those that reached [minCount] in
+     * either window — with each window's participation rate.
+     *
      * [inScope] selects which files the comparison is ABOUT (`--category`), as opposed to
      * which are hidden from the listing (`--exclude-role`). The distinction matters for
      * [Comparison.summary]: a category is a deliberate scoping of the question, so the
