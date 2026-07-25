@@ -24,7 +24,7 @@ cochange mixes three kinds of statement and labels them, because reading them as
 
 Every `--json` output carries a `schemaVersion`, the pinned conditions it ran under, module-detection provenance, and a `tier` on each block — so a consumer never has to guess which layer a number came from. Findings also publish the scores that ranked them (`evidence.evidenceStrength`, `evidence.interest`, `evidence.nameSimilarity`) and name their own denominator (`evidence.sampleMeaning`), because a bare `1.0` from 5-of-5 and a `0.8` from 20-of-25 are not what they look like.
 
-When the derived layer is too weak to support an interpretation, cochange **withholds** the finding rather than footnoting it — e.g. if module detection resolved most files by directory name instead of by a build file, `boundary_mismatch` and `unstable_hub` are not produced, and the run says so. Raw evidence (`pairs`, `clusters`, `metrics`) is never withheld.
+When the derived layer can't support an interpretation, cochange **withholds** the finding rather than footnoting it — and it decides per finding, not per repository. A `boundary_mismatch` is only reported when *both* of its files sit in a module the repository declares (a build file, a SwiftPM target, a `--module-root` glob); a pair whose "modules" are two top-level folder names is dropped even if the rest of the repo is well declared. With fewer than two declared modules there is no boundary to cross at all, so both module-dependent detectors are withheld outright and `skippedDetectors` says so. Raw evidence (`pairs`, `clusters`, `metrics`) is never withheld.
 
 ## Install
 
@@ -41,7 +41,7 @@ cochange analyze /path/to/repo --since "2 years ago"   # findings with evidence
 cochange findings /path/to/repo --type unstable_hub    # filter last analysis (--json for AI)
 cochange inspect finding-3 /path/to/repo               # full evidence for one finding
 cochange pairs /path/to/repo --category source         # raw co-change pairs, strongest first
-cochange clusters /path/to/repo --category source      # de-facto change units (grouped pairs)
+cochange clusters /path/to/repo --category source      # co-change neighbourhoods (grouped pairs)
 cochange detectors                                     # what this tool can find
 cochange metrics /path/to/repo --json                  # repo-level scores (higher = better), for trending over time
 cochange pairs /path/to/repo --json                    # raw evidence as JSON (also clusters --json)
@@ -120,7 +120,7 @@ finding-8 [split_candidate/source] impact=medium confidence=0.9
 
 `confidence` is each type's own ratio: for `boundary_mismatch` P(other | rarer), for `unstable_hub` the share of multi-file changes the file was dragged into, for `split_candidate` the share of its own changes that involved a group. Use `--json` when you need the sample-corrected strength rather than the ratio.
 
-`clusters` groups strongly co-changing files into the codebase's de-facto change units. It prints one headline per cluster; the full file list is one `--show` away, so a big monolith stays readable:
+`clusters` groups files linked by co-change into connected components. A cluster is transitive — `A`–`B` and `B`–`C` with no `A`–`C` link still yields one `{A,B,C}` cluster, and no single change need ever have touched all three — so read it as the neighbourhood a pair sits in, not as an observed change unit. It prints one headline per cluster; the full file list is one `--show` away, so a big monolith stays readable:
 
 ```text
 $ cochange clusters conference-app-2025 --min-support 5 --category source
@@ -152,7 +152,7 @@ cluster 4: 4 files, 6 strong pairs (pair-support volume 30)
   strongest pair: AndroidAppGraph.kt x JvmAppGraph.kt (5 together, jaccard 1.00)
 ```
 
-Each cluster is a real change unit the module structure doesn't show: the session-detail screen and its floating menu (cluster 1), and the KMP entry points above (cluster 4).
+Each cluster is a co-change neighbourhood the module structure doesn't show: the session-detail screen and its floating menu (cluster 1), and the KMP entry points above (cluster 4). Whether the whole cluster ever moved as one change is a separate question — check `pairs` for the links that actually carry it.
 
 Synchronized sibling files (e.g. `values/strings.xml` + `values-ja/strings.xml` + … — same basename, sibling directories, one module, that history shows always move together) are collapsed into a single node so a translation or variant set can't dominate a cluster or manufacture a hub. The family is learned from the repo, not from a locale/ecosystem list, and only collapsed when the co-change actually confirms it. Raw pairs are untouched; `--no-collapse` expands them.
 

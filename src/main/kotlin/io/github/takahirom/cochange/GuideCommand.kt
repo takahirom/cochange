@@ -74,8 +74,11 @@ private val GUIDE_TOPICS: Map<String, String> = linkedMapOf(
              dropped instead. Either way: inspect the directory layout and
              re-run with --module-root '<dir-pattern>/*'.
           2. cochange findings <repo> --json
-             Findings are ordered source-first, strongest-first. Triage by
-             type + impact; ignore build/docs categories on a first pass.
+             Findings are grouped source-first; within boundary_mismatch they
+             are ordered by `interest`, and the other two types keep detector
+             order. So finding-1 is not necessarily the strongest thing in the
+             list — compare evidence.evidenceStrength within a type yourself.
+             Triage by type + impact; ignore build/docs on a first pass.
           3. cochange inspect <finding-id> <repo>
              Read observation, counterSignals, and evidence — not just the
              summary. supportingChanges gives each backing CHANGE UNIT, with
@@ -84,8 +87,11 @@ private val GUIDE_TOPICS: Map<String, String> = linkedMapOf(
              two or three before claiming the files change for the same reason.
              A unit can be several commits, so judge the unit, not one commit.
           4. cochange clusters <repo> --category source
-             The de-facto change units. Use when findings feel fragmented —
-             clusters show the whole group a pair belongs to.
+             Groups of files linked by co-change. A cluster is a connected
+             component, so it is transitive: A-B and B-C with no A-C still
+             yields one {A,B,C} cluster, and no such change unit need ever
+             have existed. Use it to see the whole neighbourhood a pair sits
+             in, then check whether a real change touched the whole group.
           5. cochange pairs <repo> --file <substring>
              Drill into one file: every partner it co-changes with.
         Then pick the goal playbook that matches what you found:
@@ -116,7 +122,10 @@ private val GUIDE_TOPICS: Map<String, String> = linkedMapOf(
             so one side stops changing.
           - If one side is test support (a Fake), generate or colocate it.
         Done when the proposal names which file moves where (or which seam is
-        added) and cites the co-change count as the expected saving.
+        added) and cites the co-change count as the size of the coupling. That
+        count is NOT an edit saving: moving two files into one module leaves
+        both edits in place. Only an intervention that removes one side's edit
+        saves work, and git history cannot estimate that counterfactual.
     """.trimIndent() + READING_TRAILER,
 
     "reduce-change-tax" to """
@@ -142,11 +151,14 @@ private val GUIDE_TOPICS: Map<String, String> = linkedMapOf(
     "split-god-class" to """
         == guide: split-god-class ==
         Act on split_candidate: a file whose co-change partners form groups
-        that never co-change with each other.
+        that rarely co-change with each other (below the partner-link
+        threshold, which is not the same as never).
 
         Recipe:
           1. cochange findings <repo> --type split_candidate --json
-             The groups in the observation ARE the proposed split lines.
+             The groups in the observation are candidate split lines, not
+             the answer: they come from a link threshold, so members of
+             different groups may still co-change occasionally.
           2. Counter-check eras: groups can be old vs new caller generations
              or platform variants, not separable responsibilities. Compare each
              group's firstSeen/lastSeen — if one ended where the other began,
@@ -173,8 +185,11 @@ private val GUIDE_TOPICS: Map<String, String> = linkedMapOf(
              (screen + logic + tests moving together) is a ready-made
              extraction proposal.
           2. cochange findings <repo> --type unstable_hub
-             Hubs work without boundaries; extracting a cluster that a hub
-             belongs to won't help until the hub itself is addressed.
+             Note unstable_hub needs declared module boundaries too — its
+             threshold is "spans 5+ other modules" — so in a single-module
+             repo it is withheld. Declare roots with --module-root first.
+             Extracting a cluster a hub belongs to won't help until the hub
+             itself is addressed.
           3. cochange findings <repo> --type split_candidate
              God classes must be split before their cluster can be extracted
              cleanly.
