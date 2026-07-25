@@ -57,11 +57,21 @@ data class Finding(
     val confidence: Double,
     val impact: String,
     /**
-     * The files this finding is about — the pair, the hub, or the split candidate.
-     * Summaries abbreviate paths for readability, so a consumer needs these to act
-     * on a finding without parsing prose.
+     * Every file this finding is about, unordered: both sides of a pair, the hub, or a
+     * split candidate together with all of its partners. Summaries abbreviate paths for
+     * readability, so a consumer needs these to act on a finding without parsing prose.
+     * When you need "which file is this finding ABOUT", use [subjects] — position in
+     * this list carries no meaning.
      */
     val files: List<String> = emptyList(),
+    /**
+     * The file(s) the finding is making a claim about, as opposed to the context they
+     * were found against: the two sides of a `boundary_mismatch`, the hub, the split
+     * candidate. For a split candidate [files] additionally holds every partner, and
+     * "the candidate is first" used to be an unwritten convention a consumer had to
+     * guess at.
+     */
+    val subjects: List<String> = emptyList(),
     /** Always [EvidenceTier.INTERPRETATION]: a finding is a review candidate, not a measurement. */
     val tier: String = EvidenceTier.INTERPRETATION,
     /** The counted numbers underneath, with the denominator spelled out. */

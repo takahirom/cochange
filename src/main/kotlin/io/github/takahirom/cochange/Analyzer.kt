@@ -194,6 +194,7 @@ class BoundaryMismatchDetector(
             confidence = round2(confidence),
             impact = if (confidence >= 0.8 && reverse >= 0.3 && p.together >= 10 && !namesRelated(p.a, p.b)) "high" else "medium",
             files = listOf(p.a, p.b),
+            subjects = listOf(p.a, p.b),
             evidence = FindingEvidence(
                 support = p.together,
                 sampleSize = rarerCount,
@@ -294,6 +295,7 @@ class UnstableHubDetector(
                     confidence = round2(rate),
                     impact = if (rate >= 0.05) "high" else "medium",
                     files = listOf(file),
+                    subjects = listOf(file),
                     evidence = FindingEvidence(
                         support = count,
                         sampleSize = multiFileChanges.size,

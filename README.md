@@ -197,7 +197,7 @@ cooling down — was more central, quieter lately:
 
 Each rate is the file's share of that window's multi-file changes. `--baseline`/`--recent` take `30d`-style shorthand or any git `--since` expression (including absolute dates).
 
-For a weekly cadence, `compare --json` (and `metrics --json`) give machine-readable output. `compare --json` includes `heating`, `cooling`, and `meanAbsShift` (per-listed-file mean change in participation share) plus every mover, so you can track a single "how much moved this week" number over time. Trend `meanAbsShift`, not `totalAbsShift` — the latter grows with how many files clear `--min-count`. Both windows also report their resolved start and their multi-file denominator, and `windowsOverlap` flags the usual `--baseline 180d --recent 30d` case where the two samples aren't independent.
+For a weekly cadence, `compare --json` (and `metrics --json`) give machine-readable output. `compare --json` includes `heating`, `cooling`, and `meanAbsShift` (per-listed-file mean change in participation share) plus every mover, so you can track a single "how much moved this week" number over time. Trend `meanAbsShift`, not `totalAbsShift` — the latter grows with how many files clear `--min-count`. Both windows also report their resolved start and their multi-file denominator, plus the single change unit both were counted in (`changeUnit`) — `auto` is resolved once, from the baseline, because resolving it per window would compare per-PR participation against per-author-window participation. `recentIsInsideBaseline` confirms the usual nesting; the two windows always overlap, since both end at HEAD, so a shift is a change in *share*, not a before/after difference.
 
 ## How it works
 

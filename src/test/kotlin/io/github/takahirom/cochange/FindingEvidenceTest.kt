@@ -92,3 +92,39 @@ class FindingEvidenceTest {
         assertEquals(0.5, hub.confidence)
     }
 }
+
+/**
+ * `files` mixes the finding's subject with the context it was found against — for a
+ * split candidate, the candidate plus every partner. "The candidate is first" was an
+ * unwritten convention, so a consumer had to guess which file to act on.
+ */
+class FindingSubjectTest {
+    private var t = 0L
+    private fun commit(vararg files: String): Commit {
+        t += 3600 * 24
+        return Commit("h$t", "dev", t, "m", files.toList())
+    }
+
+    @Test
+    fun `a split candidate names its subject apart from its partners`() {
+        val head = setOf("app/God.kt", "app/A1.kt", "app/A2.kt", "app/B1.kt", "app/B2.kt")
+        val changes = List(8) { LogicalChange(listOf(commit("app/God.kt", "app/A1.kt", "app/A2.kt"))) } +
+            List(8) { LogicalChange(listOf(commit("app/God.kt", "app/B1.kt", "app/B2.kt"))) }
+        val findings = SplitCandidateDetector(minSupport = 5)
+            .detect(AnalysisContext(changes, Boundaries(head), head))
+        val split = findings.singleOrNull { it.subjects == listOf("app/God.kt") }
+        assertTrue(split != null, "expected one split candidate: ${findings.map { it.summary }}")
+        assertTrue(split.files.size > split.subjects.size, "files also carries the partners")
+        assertTrue(split.subjects.all { it in split.files }, "subjects must be a subset of files")
+    }
+
+    @Test
+    fun `a boundary mismatch treats both sides as subjects`() {
+        val head = setOf("app/build.gradle.kts", "app/A.kt", "core/build.gradle.kts", "core/B.kt")
+        val changes = List(10) { LogicalChange(listOf(commit("app/A.kt", "core/B.kt"))) }
+        val finding = Analyzer(minSupport = 5, minConfidence = 0.6)
+            .analyze(AnalysisContext(changes, Boundaries(head), head))
+            .single { it.type == "boundary_mismatch" }
+        assertEquals(setOf("app/A.kt", "core/B.kt"), finding.subjects.toSet())
+    }
+}

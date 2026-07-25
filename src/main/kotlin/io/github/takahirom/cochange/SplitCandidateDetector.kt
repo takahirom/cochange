@@ -97,6 +97,7 @@ class SplitCandidateDetector(
                 confidence = round2(groupSupport.toDouble() / ownChanges.coerceAtLeast(1)),
                 impact = if (c.components.size >= 3) "high" else "medium",
                 files = listOf(file) + c.components.flatten(),
+                subjects = listOf(file),
                 evidence = FindingEvidence(
                     support = groupSupport,
                     sampleSize = ownChanges,

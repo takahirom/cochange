@@ -57,11 +57,17 @@ class CompareTest {
     }
 
     @Test
-    fun `a recent window inside the baseline is reported as overlapping`() {
+    fun `nesting is reported, because overlap is unconditional`() {
         val wide = Compare.Window("180d", "2025-01-01T00:00:00Z", 100, 80)
         val narrow = Compare.Window("30d", "2025-06-01T00:00:00Z", 20, 15)
-        assertTrue(Compare.overlaps(wide, narrow), "the two samples are not independent, and that must be stated")
-        assertTrue(!Compare.overlaps(narrow, wide))
+        assertTrue(
+            Compare.recentIsInsideBaseline(wide, narrow),
+            "the intended usage: the samples are not independent, and that must be stated",
+        )
+        // Swapping them does not make the windows independent — both still end at HEAD.
+        // The old field was named `windowsOverlap` and returned false here, which was
+        // simply untrue; this reports the swap instead.
+        assertTrue(!Compare.recentIsInsideBaseline(narrow, wide), "--baseline 30d --recent 180d is reversed")
     }
 
     @Test

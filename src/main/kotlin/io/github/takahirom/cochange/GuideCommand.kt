@@ -249,6 +249,9 @@ private val GUIDE_TOPICS: Map<String, String> = linkedMapOf(
              Do not read an empty findings list before reading this.
         confidence is each type's own ratio and is not comparable across
         types — see the field docs, or use evidence.* instead.
+        Act on finding.subjects, not finding.files: files also holds the context
+        a finding was found against (for a split candidate, every partner), and
+        position in it means nothing.
         Co-change measures "changed at the same times" only. Whether the files
         changed "for the same reasons" needs the supportingChanges commits —
         read two or three before claiming a shared reason.

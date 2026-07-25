@@ -114,7 +114,7 @@ object Compare {
                 baseline = baseline, recent = recent,
                 changeUnit = changeUnit, changeUnitReason = changeUnitReason,
                 recentWindowAloneWouldUse = recentWindowAloneWouldUse,
-                windowsOverlap = overlaps(baseline, recent),
+                recentIsInsideBaseline = recentIsInsideBaseline(baseline, recent),
                 heating = s.heating, cooling = s.cooling,
                 totalAbsShift = round4(s.totalAbsShift), meanAbsShift = round4(s.meanAbsShift),
                 moves = moves.sortedByDescending { abs(it.delta) }.map {
@@ -125,11 +125,17 @@ object Compare {
     }
 
     /**
-     * True when the recent window is a sub-range of the baseline — the normal case
-     * (`--baseline 180d --recent 30d`), and worth stating: the two samples are not
-     * independent, so a shift is a change in *share*, not a before/after difference.
+     * True when the recent window is nested inside the baseline — the intended usage
+     * (`--baseline 180d --recent 30d`). False means the two were passed the wrong way
+     * round, and every "recent" number is the wider sample.
+     *
+     * Note the two windows ALWAYS overlap: both end at the same HEAD, so one is always
+     * a sub-range of the other. That is why this reports nesting rather than overlap —
+     * a previous `windowsOverlap` field was false for a swapped pair that did in fact
+     * overlap. The samples are never independent, so a shift is a change in *share*,
+     * not a before/after difference.
      */
-    fun overlaps(baseline: Window, recent: Window): Boolean {
+    fun recentIsInsideBaseline(baseline: Window, recent: Window): Boolean {
         val b = baseline.resolvedSince ?: return true
         val r = recent.resolvedSince ?: return true
         return b <= r
@@ -158,7 +164,12 @@ object Compare {
          * became more central.
          */
         val recentWindowAloneWouldUse: String,
-        val windowsOverlap: Boolean,
+        /**
+         * True when the recent window is nested inside the baseline. The two always
+         * overlap — both end at HEAD — so a shift is a change in share, never a
+         * before/after difference between independent samples.
+         */
+        val recentIsInsideBaseline: Boolean,
         val heating: Int,
         val cooling: Int,
         /** Summed |delta| across listed files. Scales with how many files are listed. */
