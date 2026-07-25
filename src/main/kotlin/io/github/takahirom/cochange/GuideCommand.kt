@@ -249,7 +249,14 @@ private val GUIDE_TOPICS: Map<String, String> = linkedMapOf(
              holds one way is a different (weaker) claim.
           5. Category. build/config/docs co-change with everything by design;
              they are ranked separately for a reason.
-          6. warnings. Every JSON output carries them (code + severity +
+          6. Hidden roles. --exclude-role never changes a number, only what is
+             listed, so every count you see still includes the hidden files.
+             Each listing says how many it is not showing: hiddenByRole (per
+             role, per run), cluster.hiddenFiles vs cluster.fileCount,
+             SplitGroup.hiddenMembers, metrics.hubCount vs hubFiles,
+             compare's summarizedFiles vs moves. If a list looks shorter than
+             its own counts, that is why — do not read it as evidence changing.
+          7. warnings. Every JSON output carries them (code + severity +
              message). severity=warning means STOP: the numbers rest on a
              truncated or empty history. window_is_now means the --since
              string was not a date git understood, so "no findings" says
