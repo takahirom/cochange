@@ -68,12 +68,25 @@ object Compare {
      * Files whose participation is worth comparing (reached [minCount] in either
      * window), with each window's participation rate.
      */
-    fun of(baseline: AnalysisContext, recent: AnalysisContext, minCount: Int = 3): Comparison {
+    /**
+     * [inScope] selects which files the comparison is ABOUT (`--category`), as opposed to
+     * which are hidden from the listing (`--exclude-role`). The distinction matters for
+     * [Comparison.summary]: a category is a deliberate scoping of the question, so the
+     * trend number must honour it, while a role filter is a view and must not move it.
+     * Filtering after summarising reported `heating=1` for a file the caller had excluded.
+     */
+    fun of(
+        baseline: AnalysisContext,
+        recent: AnalysisContext,
+        minCount: Int = 3,
+        inScope: (String) -> Boolean = { true },
+    ): Comparison {
         val (baseCounts, baseUnits) = participation(baseline)
         val (recentCounts, recentUnits) = participation(recent)
         // Rates came from the full population above; hidden roles are dropped here, where
         // we choose what to list.
         val allMoves = (baseCounts.keys + recentCounts.keys)
+            .filter(inScope)
             .mapNotNull { file ->
             val bc = baseCounts[file] ?: 0
             val rc = recentCounts[file] ?: 0

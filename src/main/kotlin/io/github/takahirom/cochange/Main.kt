@@ -436,9 +436,12 @@ class CompareCommand : CliktCommand(
             baseSetup.changeUnitName
         }
 
-        val computed = Compare.of(baseCtx, recentCtx, minCount)
+        // --category is passed in, not applied afterwards: the summary has to describe the
+        // same set the listing does, or `--category source` reports movers it does not show.
+        val computed = Compare.of(baseCtx, recentCtx, minCount) { file ->
+            category == null || recentCtx.categoryOf(file) == category || baseCtx.categoryOf(file) == category
+        }
         val moves = computed.moves
-            .filter { category == null || recentCtx.categoryOf(it.file) == category || baseCtx.categoryOf(it.file) == category }
 
         // Report the denominator the rates were actually divided by (multi-file units),
         // alongside each window's total activity — printing only the latter next to a

@@ -89,11 +89,22 @@ class SplitCandidateDetector(
             val groupSupport = context.changes.count { unit ->
                 file in unit.files && c.components.any { comp -> comp.any { it in unit.files } }
             }
+            // The prose names files too, so it has to respect the filter as well —
+            // SplitGroup.files was the only place that did, and the observation, the
+            // top-level `files` list and the churn lookup all still leaked hidden paths.
             val groups = c.components.mapIndexed { i, component ->
-                val names = component.take(5).joinToString(", ") { it.substringAfterLast('/') }
-                val more = if (component.size > 5) " … and ${component.size - 5} more" else ""
-                "group ${i + 1} (${component.size} files): $names$more"
+                val shown = component.filter(context::isVisible)
+                val hidden = component.size - shown.size
+                val names = shown.take(5).joinToString(", ") { it.substringAfterLast('/') }
+                val more = if (shown.size > 5) " … and ${shown.size - 5} more" else ""
+                val withheld = if (hidden > 0) {
+                    (if (shown.isEmpty()) "" else "; ") + "$hidden hidden by --exclude-role"
+                } else ""
+                "group ${i + 1} (${component.size} files): $names$more$withheld"
             }
+            // Every partner the finding is about, minus the hidden ones. The counts above
+            // still include them; this is the list a reader acts on.
+            val visiblePartners = c.components.flatten().filter(context::isVisible)
             Finding(
                 id = "",
                 type = type,
@@ -104,7 +115,7 @@ class SplitCandidateDetector(
                 // often the file actually changes.
                 confidence = round2(groupSupport.toDouble() / ownChanges.coerceAtLeast(1)),
                 impact = if (c.components.size >= 3) "high" else "medium",
-                files = listOf(file) + c.components.flatten(),
+                files = listOf(file) + visiblePartners,
                 subjects = listOf(file),
                 evidence = FindingEvidence(
                     support = groupSupport,
@@ -130,11 +141,12 @@ class SplitCandidateDetector(
                         "Groups can also reflect eras (an old and a new caller generation) or platform variants rather than separable responsibilities — check whether the groups are alive at the same time.",
                     ),
                     supportingChanges = context.sampleChangesTouching(
-                        file, (listOf(file) + c.components.flatten()).toSet(),
+                        file, (listOf(file) + visiblePartners).toSet(),
                     ),
                     metrics = mapOf(
                         "independentGroups" to c.components.size.toString(),
                         "partners" to c.components.sumOf { it.size }.toString(),
+                        "partnersHiddenByRole" to (c.components.sumOf { it.size } - visiblePartners.size).toString(),
                         "partnerLinkWeight" to c.partnerSupport.toString(),
                     ),
                     groups = structuredGroups,

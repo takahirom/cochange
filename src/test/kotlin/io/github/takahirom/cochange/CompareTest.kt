@@ -77,3 +77,36 @@ class CompareTest {
         assertTrue(Compare.of(ctx, ctx, minCount = 3).moves.isEmpty())
     }
 }
+
+/**
+ * `--category` scopes the question, so the summary must describe the same set the listing
+ * does. Filtering after summarising reported movers the caller had excluded.
+ */
+class CompareCategoryScopeTest {
+    private var t = 0L
+    private fun commit(vararg files: String): Commit { t += 3600 * 24; return Commit("h$t", "a", t, "m", files.toList()) }
+
+    @Test
+    fun `a category filter scopes the summary, not only the listing`() {
+        val head = setOf("app/App.kt", "app/build.gradle.kts", "core/Core.kt")
+        // build.gradle.kts heats up; the Kotlin files stay flat.
+        val baseline = AnalysisContext(
+            List(10) { LogicalChange(listOf(commit("app/App.kt", "core/Core.kt"))) },
+            Boundaries(head), head,
+        )
+        val recent = AnalysisContext(
+            List(10) { LogicalChange(listOf(commit("app/App.kt", "core/Core.kt"))) } +
+                List(10) { LogicalChange(listOf(commit("app/build.gradle.kts", "core/Core.kt"))) },
+            Boundaries(head), head,
+        )
+        val sourceOnly = Compare.of(baseline, recent, minCount = 1) { it.endsWith(".kt") }
+        assertTrue(
+            sourceOnly.moves.none { it.file.endsWith(".gradle.kts") },
+            "the listing excludes the build file: ${sourceOnly.moves.map { it.file }}",
+        )
+        assertEquals(
+            sourceOnly.moves.count { it.delta > 0 }, sourceOnly.summary.heating,
+            "the summary must count exactly what it lists",
+        )
+    }
+}

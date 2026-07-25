@@ -185,6 +185,28 @@ class RoleFilterLeavesEveryScoreTest {
     }
 
     @Test
+    fun `a hidden group member appears nowhere in the finding`() {
+        val hidden = SplitCandidateDetector(minSupport = 5)
+            .detect(context(FileRole.TEST)).single { it.subjects == listOf("app/Hub.kt") }
+        val everywhere = listOf(
+            hidden.summary,
+            hidden.detail.observation,
+            hidden.files.joinToString(" "),
+            hidden.detail.groups.flatMap { it.files }.joinToString(" "),
+            hidden.detail.supportingChanges.flatMap { it.filesTouched }.joinToString(" "),
+            hidden.detail.metrics.entries.joinToString(" "),
+        )
+        for (text in everywhere) {
+            assertTrue(
+                "C1Test" !in text && "C2Test" !in text,
+                "an excluded role must not appear in any part of the finding: $text",
+            )
+        }
+        // ...and the reader is told something was withheld rather than left guessing.
+        assertTrue("hidden by --exclude-role" in hidden.detail.observation, hidden.detail.observation)
+    }
+
+    @Test
     fun `hiding tests does not change compare's trend numbers`() {
         val shown = Compare.of(context(), context(), minCount = 1)
         val hidden = Compare.of(context(FileRole.TEST), context(FileRole.TEST), minCount = 1)

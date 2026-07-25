@@ -761,3 +761,32 @@ class CodeVersusDeclarativeTest {
         }
     }
 }
+
+/** A lockfile is a resolved snapshot, so nothing else may describe the pair first. */
+class LockfileCouplingTest {
+    @Test
+    fun `two build files, one of them a lockfile, is not build wiring`() {
+        val estimate = CouplingKind.of("web/package-lock.json", "web/package.json", FileCategory.BUILD, namesRelated = true)
+        assertEquals("lockfile", estimate.kind, "package-lock.json is not a build definition")
+        assertEquals("none", estimate.effort)
+    }
+
+    @Test
+    fun `a lockfile beside documentation is still a lockfile`() {
+        val estimate = CouplingKind.of("CHANGELOG.md", "Cargo.lock", FileCategory.DOCS, namesRelated = false)
+        assertEquals("lockfile", estimate.kind)
+    }
+
+    @Test
+    fun `a lockfile beside code is not a manifest declaring it`() {
+        val estimate = CouplingKind.of("web/package-lock.json", "src/App.kt", FileCategory.BUILD, namesRelated = false)
+        assertEquals("lockfile", estimate.kind)
+    }
+
+    @Test
+    fun `resolved-dependency files of other ecosystems count as lockfiles`() {
+        for (name in listOf("Package.resolved", "packages.lock.json", "flake.lock", "uv.lock")) {
+            assertEquals(FileRole.LOCKFILE, FileRole.of("a/$name"), name)
+        }
+    }
+}
