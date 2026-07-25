@@ -209,11 +209,17 @@ private val GUIDE_TOPICS: Map<String, String> = linkedMapOf(
              evidence.sampleMeaning — the denominator differs per finding type.
              confidence 1.0 from 5 of 5 is weaker than 0.7 from 80.
              evidence.evidenceStrength is the sample-corrected number; prefer
-             it over the raw ratio when comparing two findings.
-          2. evidence.nameSimilarity. High means the names already predicted
-             the coupling (Foo / DefaultFoo) — low architectural surprise.
-             evidence.interest is what ranked the list; it is published so you
-             can re-rank yourself instead of trusting order.
+             it over the raw ratio when comparing two findings OF THE SAME
+             type. It is present for all three types, but each type's
+             denominator differs, so it is not comparable across types.
+          2. evidence.nameSimilarity and evidence.interest exist for
+             boundary_mismatch only — the other two types have no pair of names
+             to compare, and the fields are null rather than faked. High
+             nameSimilarity means the names already predicted the coupling
+             (Foo / DefaultFoo): low architectural surprise. interest is what
+             ordered the list, and interest can put a small-sample surprising
+             pair above a well-supported predictable one. Sort by
+             evidenceStrength yourself if that is not what you want.
           3. counterSignals. One-directional coupling means the partner is
              probably just a widely shared file.
           4. Both directions in metrics: P(A|B) vs P(B|A). Coupling that only

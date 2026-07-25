@@ -102,6 +102,12 @@ class SplitCandidateDetector(
                     sampleSize = ownChanges,
                     sampleMeaning = "change units touching $file",
                     ratio = round2(groupSupport.toDouble() / ownChanges.coerceAtLeast(1)),
+                    // Sample-corrected over this type's own denominator, so two split
+                    // candidates can be compared without re-deriving the correction.
+                    evidenceStrength = round2(
+                        kotlin.math.ln(1.0 + groupSupport) *
+                            Surprise.wilsonLower(groupSupport, ownChanges.coerceAtLeast(1))
+                    ),
                 ),
                 detail = FindingDetail(
                     observation = "$file strongly co-changes with ${c.components.sumOf { it.size }} files that fall into " +

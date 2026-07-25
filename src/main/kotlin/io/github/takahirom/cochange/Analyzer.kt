@@ -1,5 +1,7 @@
 package io.github.takahirom.cochange
 
+import kotlin.math.ln
+
 fun defaultDetectors(minSupport: Int = 5, minConfidence: Double = 0.6): List<FindingDetector> = listOf(
     BoundaryMismatchDetector(minSupport = minSupport, minConfidence = minConfidence),
     UnstableHubDetector(),
@@ -137,11 +139,11 @@ class BoundaryMismatchDetector(
             .filter { context.moduleIsDeclared(it.a) && context.moduleIsDeclared(it.b) }
             .filter { boundaries.moduleOf(it.a) != boundaries.moduleOf(it.b) }
             .filter { it.confidence >= minConfidence }
-            // Rank by architectural interest, not raw strength: a surprising
-            // cross-module coupling with unrelated names and solid evidence beats
-            // an expected companion pair or a small-sample fluke. (All pairs here
-            // already cross a module boundary, so distance = 1.0.)
-            .sortedByDescending { Surprise.interest(it, architecturalDistance = 1.0) }
+            // Rank by architectural interest, not raw strength: between two pairs
+            // with comparable evidence, the one whose names did not already predict
+            // the coupling comes first. Both inputs are published per finding, so a
+            // consumer that disagrees with this weighting can re-sort.
+            .sortedByDescending { Surprise.interest(it) }
             .toList()
             // Rank per category so build files, docs, and generated code, which
             // always co-change, can't crowd production-code findings out of the list.
@@ -198,7 +200,7 @@ class BoundaryMismatchDetector(
                 sampleMeaning = "change units touching ${name(rarer)}, the rarer of the two files",
                 ratio = round2(confidence),
                 evidenceStrength = round2(Surprise.evidenceStrength(p.together, p.countA, p.countB)),
-                interest = round2(Surprise.interest(p, architecturalDistance = 1.0)),
+                interest = round2(Surprise.interest(p)),
                 nameSimilarity = round2(Surprise.nameSimilarity(p.a, p.b)),
             ),
             effort = coupling.effort,
@@ -297,6 +299,13 @@ class UnstableHubDetector(
                         sampleSize = multiFileChanges.size,
                         sampleMeaning = "change units touching more than one file",
                         ratio = round2(rate),
+                        // Same sample correction as a pair's, over this type's own
+                        // denominator, so the guide's "prefer evidenceStrength over the
+                        // raw ratio" is followable here too. Comparable between hubs,
+                        // not across finding types.
+                        evidenceStrength = round2(
+                            ln(1.0 + count) * Surprise.wilsonLower(count, multiFileChanges.size)
+                        ),
                     ),
                     detail = FindingDetail(
                         observation = "$file was part of $count of ${multiFileChanges.size} multi-file changes " +
