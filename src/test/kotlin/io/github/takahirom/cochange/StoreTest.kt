@@ -1,5 +1,6 @@
 package io.github.takahirom.cochange
 
+import kotlinx.serialization.json.Json
 import java.io.File
 import kotlin.test.AfterTest
 import kotlin.test.Test
@@ -55,5 +56,68 @@ class StoreTest {
         assertFailsWith<IllegalArgumentException> { Store.validateName("a/b") }
         assertFailsWith<IllegalArgumentException> { Store.validateName("") }
         assertTrue(Store.validateName("recent_2y-1").isNotEmpty())
+    }
+}
+
+/**
+ * A saved snapshot outlives the code that wrote it, and `Model.kt` promises that adding a
+ * field does not bump `schemaVersion` — so every additive field needs a default or the
+ * next release cannot read yesterday's cache.
+ */
+class SnapshotForwardCompatibilityTest {
+    @Test
+    fun `a snapshot written before the newest fields still deserializes`() {
+        // A v2 result as an earlier build of this schema version wrote it: no
+        // declaredModuleCount, no warnings, no detectorTypes, no tier on the detail blocks.
+        val older = """
+            {
+              "schemaVersion": 2,
+              "repo": "/tmp/x",
+              "branch": "HEAD",
+              "headCommit": "abc",
+              "shallow": false,
+              "changeUnit": "merge",
+              "analyzedCommits": 10,
+              "logicalChanges": 10,
+              "findings": [
+                {
+                  "id": "finding-1",
+                  "type": "boundary_mismatch",
+                  "category": "source",
+                  "summary": "a and b",
+                  "confidence": 1.0,
+                  "impact": "medium",
+                  "files": ["a/A.kt", "b/B.kt"],
+                  "detail": {
+                    "observation": "o",
+                    "interpretations": [],
+                    "counterSignals": [],
+                    "supportingChanges": [{"hashes": ["h1"]}]
+                  }
+                }
+              ],
+              "moduleDetection": {
+                "methods": ["nearest directory with a build file"],
+                "coverage": 1.0,
+                "moduleCount": 2,
+                "declaredFiles": 4,
+                "fallbackFiles": 0,
+                "totalFiles": 4,
+                "trust": "declared",
+                "moduleFindingsEnabled": true,
+                "note": "n"
+              }
+            }
+        """.trimIndent()
+
+        val parsed = Json { ignoreUnknownKeys = true }.decodeFromString(AnalysisResult.serializer(), older)
+        assertEquals(1, parsed.findings.size)
+        assertEquals(
+            -1, parsed.moduleDetection!!.declaredModuleCount,
+            "the field is absent, and -1 says so rather than claiming zero declared modules",
+        )
+        assertTrue(parsed.warnings.isEmpty())
+        assertEquals(DETECTOR_TYPES, parsed.detectorTypes)
+        assertEquals(listOf("h1"), parsed.findings.single().detail.supportingChanges.single().hashes)
     }
 }

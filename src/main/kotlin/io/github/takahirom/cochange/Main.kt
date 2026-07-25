@@ -85,12 +85,18 @@ class Analyze : CliktCommand(
         // large share of the entire analyzed history. Report the ratio rather than a bar:
         // it is what tells a reader whether "no findings" means "clean" or "no sample".
         val sampleWarning = if (changes.isNotEmpty() && changes.size < minSupport * 4) {
+            val reach = if (minSupport > changes.size) {
+                "--min-support $minSupport is unreachable: no coupling can appear in more units than exist, " +
+                    "so no pair finding is possible at all"
+            } else {
+                "a finding at --min-support $minSupport would rest on " +
+                    "${pct(minSupport.toDouble() / changes.size)} of the whole analyzed history"
+            }
             listOf(AnalysisWarning(
                 AnalysisWarning.FEW_CHANGE_UNITS, "warning",
-                "Only ${changes.size} change units in this window, so a finding at --min-support " +
-                    "$minSupport would rest on ${pct(minSupport.toDouble() / changes.size)} of the whole " +
-                    "analyzed history. Read \"no findings\" as \"not enough independent changes to say\", " +
-                    "not as \"nothing to fix\" — see: cochange guide small-repo.",
+                "Only ${changes.size} change units in this window, so $reach. Read \"no findings\" as " +
+                    "\"not enough independent changes to say\", not as \"nothing to fix\" — " +
+                    "see: cochange guide small-repo.",
             ))
         } else emptyList()
 
@@ -233,7 +239,10 @@ class ClustersCommand : CliktCommand(
             // Sibling directory names are paths too: an excluded role must not be named
             // here, only counted, or the text announces what the JSON is hiding.
             val members = fam.members.filter { it != file }
-            val shown = members.filter(context::isVisible)
+            // setup.context, not the projected one: project() aliases every
+            // non-representative member to the representative, so those paths are no
+            // longer in the projected headFiles and would all look role-hidden.
+            val shown = members.filter(setup.context::isVisible)
             val hidden = members.size - shown.size
             val names = shown.map { it.substringBeforeLast('/').substringAfterLast('/') }
             val withheld = if (hidden > 0) {
@@ -521,9 +530,9 @@ class CompareCommand : CliktCommand(
         // Computed over every mover, so a role filter changes the listing and not the trend.
         val summary = computed.summary
         echo("summary: ${summary.heating} heating, ${summary.cooling} cooling, " +
-            "mean shift ${"%.1f".format(summary.meanAbsShift * 100)}pp per listed file " +
-            "(${summary.files} movers at --min-count $minCount" +
-            (if (summary.files != moves.size) ", ${summary.files - moves.size} not listed" else "") + ")")
+            "mean shift ${"%.1f".format(summary.meanAbsShift * 100)}pp per mover " +
+            "(over ${summary.files} movers at --min-count $minCount" +
+            (if (summary.files != moves.size) "; ${moves.size} listed below" else "") + ")")
 
         fun pct(v: Double) = "%3.0f%%".format(v * 100)
         fun line(m: Compare.Move) = "  " + m.file.padEnd(52) +

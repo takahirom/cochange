@@ -38,8 +38,13 @@ data class ModuleDetectionReport(
     val methods: List<String>,
     val coverage: Double,
     val moduleCount: Int,
-    /** Modules backed by a declared root. Two of these are what a boundary claim needs. */
-    val declaredModuleCount: Int,
+    /**
+     * Modules backed by a declared root. Two of these are what a boundary claim needs.
+     * Defaulted because this report is persisted inside a saved snapshot, and an additive
+     * field must not stop an older one from deserializing. -1 marks "this snapshot predates
+     * the field" rather than pretending the count was zero.
+     */
+    val declaredModuleCount: Int = -1,
     val declaredFiles: Int,
     val fallbackFiles: Int,
     val totalFiles: Int,

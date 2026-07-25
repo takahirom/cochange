@@ -75,9 +75,13 @@ class RoleExclusionViewTest {
         assertTrue(!projected.isVisible("app/CheckoutTest.kt"), "a hidden test must stay hidden after projection")
     }
 
-    /** compare filtered on headFiles alone, so `--exclude-role test` always counted tests. */
+    /**
+     * compare listed every file it counted, so `--exclude-role test` still showed tests.
+     * This is about the LISTING only — that the rates do not move is
+     * `AggregateScoresIgnoreRoleFilterTest`'s job.
+     */
     @Test
-    fun `compare hides excluded roles from its participation rates`() {
+    fun `compare hides excluded roles from its listing`() {
         val shown = Compare.of(context(), context(), minCount = 1).moves.map { it.file }
         val hiddenRun = Compare.of(context(FileRole.TEST), context(FileRole.TEST), minCount = 1).moves.map { it.file }
         assertTrue("app/CheckoutTest.kt" in shown, "sanity: the test file participates")

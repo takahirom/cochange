@@ -278,7 +278,8 @@ data class SplitGroup(
      * Date of the last one. [firstSeen]..[lastSeen] are bounds, not an interval of
      * continuous activity — the group may have been idle for most of it.
      */
-    val lastSeen: String,    val tier: String = EvidenceTier.DERIVED,
+    val lastSeen: String,
+    val tier: String = EvidenceTier.DERIVED,
 )
 
 @Serializable

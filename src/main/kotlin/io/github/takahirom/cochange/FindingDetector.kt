@@ -183,11 +183,19 @@ class AnalysisContext(
             .map { unit -> SupportingChange(unit.hashes, unit.files.filter { it in files }.sorted()) }
             .toList()
 
-    /** As [sampleChanges], but for a finding about one file among many partners. */
-    fun sampleChangesTouching(subject: String, findingFiles: Set<String>, limit: Int = 10): List<SupportingChange> =
-        changes.asSequence()
-            .filter { subject in it.files }
+    /**
+     * As [sampleChanges], but for a finding about one file among many partners: sample the
+     * units where [subject] moved together with at least one of them.
+     *
+     * The partner check has to come BEFORE `take`, or the first units touching the subject
+     * alone are returned and a "supporting change" shows no co-change at all.
+     */
+    fun sampleChangesTouching(subject: String, findingFiles: Set<String>, limit: Int = 10): List<SupportingChange> {
+        val partners = findingFiles - subject
+        return changes.asSequence()
+            .filter { unit -> subject in unit.files && unit.files.any { it in partners } }
             .take(limit)
             .map { unit -> SupportingChange(unit.hashes, unit.files.filter { it in findingFiles }.sorted()) }
             .toList()
+    }
 }
