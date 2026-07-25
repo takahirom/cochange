@@ -342,12 +342,20 @@ class ClustersCommand : CliktCommand(
         // Reproducing the clusters above needs the conditions they were computed under. With
         // --analysis that is the snapshot, and emitting --since alongside it would print two
         // conflicting sources for the same window.
+        // Every option that changes the clustering, or the command does not reproduce what
+        // was just printed. With --analysis the snapshot supplies the history conditions, so
+        // repeating them would name two sources for the same window.
         val opts = buildString {
             if (analysis != null) {
                 append(" --analysis $analysis")
             } else {
                 history.since?.let { append(" --since \"$it\"") }
+                history.branch?.let { append(" --branch $it") }
+                if (history.changeUnit != "auto") append(" --change-unit ${history.changeUnit}")
+                history.excludeRole?.let { append(" --exclude-role ${it.joinToString(",")}") }
+                history.focus?.let { append(" --focus $it") }
             }
+            if (noCollapse) append(" --no-collapse")
             append(" --min-support $minSupport --min-jaccard $minJaccard")
             category?.let { append(" --category $it") }
         }
@@ -388,7 +396,7 @@ class MetricsCommand : CliktCommand(
         val hiddenHubs = m.hubCount - m.hubFiles.size
         echo("hub-free change rate   ${fmt(m.hubFreeRate)}  (${m.hubAvoidingUnits}/${m.multiFileUnits} units avoid the " +
             "${m.hubCount} hub files${if (hiddenHubs > 0) ", $hiddenHubs not listed" else ""})" +
-            if (m.hubFreeRate == null) "  [needs >= 6 modules]" else "")
+            if (m.hubFreeRate == null) "  [needs >= 6 declared modules in multi-file changes]" else "")
         m.hubFiles.take(3).forEach { echo("                         hub: $it") }
         echo("boundary integrity     ${fmt(m.boundaryIntegrity)}  (${m.hotspotFreeCrossUnits}/${m.crossModuleUnits} cross-module units avoid the ${m.boundaryHotspots} recurring hotspot pairs)")
         m.topHotspot?.let { p ->
@@ -589,7 +597,7 @@ class Inspect : CliktCommand(
         val repo = File(path).canonicalFile
         val result = loadOrFail(path, analysis)
         val finding = result.findings.find { it.id == id }
-            ?: error("no finding '$id' — available: ${result.findings.joinToString(", ") { it.id }}")
+            ?: throw CliktError("no finding '$id' — available: ${result.findings.joinToString(", ") { it.id }}")
         // Resolve the hashes now rather than storing subjects and churn in the cache:
         // an older snapshot benefits too, and the cache stays a cache.
         val findingFiles = finding.files.toSet()
@@ -643,7 +651,9 @@ private fun resolveOptions(path: String, analysis: String?, history: HistoryOpti
     if (analysis == null) return history.toAnalysisOptions()
     val loaded = loadOrFail(path, analysis)
     return loaded.options
-        ?: error("analysis '$analysis' predates recorded conditions — re-run: cochange analyze $path --save $analysis")
+        ?: throw CliktError(
+            "analysis '$analysis' predates recorded conditions — re-run: cochange analyze $path --save $analysis",
+        )
 }
 
 private fun loadOrFail(path: String, analysis: String = Store.DEFAULT_NAME): AnalysisResult {
@@ -656,10 +666,10 @@ private fun loadOrFail(path: String, analysis: String = Store.DEFAULT_NAME): Ana
             analysis !in saved -> "saved analyses: ${saved.joinToString(", ")}"
             else -> "run: cochange analyze $path --save $analysis"
         }
-        error("no analysis '$analysis' for $repo — $hint")
+        throw CliktError("no analysis '$analysis' for $repo — $hint")
     }
     if (result.schemaVersion != SCHEMA_VERSION) {
-        error(
+        throw CliktError(
             "analysis '$analysis' uses schema v${result.schemaVersion}; this cochange reads v$SCHEMA_VERSION. " +
                 "Field meanings changed, so it won't be reinterpreted — re-run: cochange analyze $path" +
                 if (analysis != Store.DEFAULT_NAME) " --save $analysis" else "",
@@ -699,17 +709,16 @@ private fun printBanner(setup: AnalysisSetup, echo: (String, Boolean) -> Unit, c
     }
 }
 
-/**
- * Reports how the structure findings depend on was resolved, and whether any
- * detector was withheld because it wasn't resolved well enough. Printed before
- * the findings so the reader knows what they are trusting, and printed even
- * when there are no findings — "nothing found" and "nothing was allowed to
- * run" are different answers.
- */
 /** "(N hidden by --exclude-role)" when a cluster's listing is shorter than its counts. */
 private fun hiddenNote(cluster: Clusters.Cluster): String =
     if (cluster.hiddenFiles > 0) " (${cluster.hiddenFiles} hidden by --exclude-role)" else ""
 
+/**
+ * Reports how the structure the findings depend on was resolved, and whether any detector
+ * was withheld because it wasn't resolved well enough. Printed before the findings so the
+ * reader knows what they are trusting, and printed even when there are no findings —
+ * "nothing found" and "nothing was allowed to run" are different answers.
+ */
 private fun printTrustNotes(result: AnalysisResult, echo: (String) -> Unit) {
     // Warnings the ANALYSIS added (not the setup, which the banner already printed):
     // the sample-size caveat is only knowable once the thresholds are known.

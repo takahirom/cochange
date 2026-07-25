@@ -26,7 +26,11 @@ data class RepoMetrics(
      * same. Can be negative. Null when one effective module makes the question vacuous.
      */
     val adjustedLocality: Double?,
-    /** Share of multi-file change units not touching any hub file. Null when hubs cannot meaningfully exist (< 6 modules). */
+    /**
+     * Share of multi-file change units not touching any hub file. Null when hubs cannot
+     * meaningfully exist — fewer than 6 declared modules appear across those units, so the
+     * ">= 5 other modules" part of the hub predicate is unsatisfiable.
+     */
     val hubFreeRate: Double?,
     /** Share of cross-module change units that avoid every recurring hotspot pair. Null when nothing crosses modules. */
     val boundaryIntegrity: Double?,
@@ -108,11 +112,18 @@ object Metrics {
         // the hub-free rate is a share of all multi-file units.
         // Unfiltered for the rate; the displayed list below is filtered. Otherwise
         // `--exclude-role test` moved hubFreeRate, which the tool promises it cannot.
-        val hubFiles = context.hubFiles(minParticipation = 20, minModuleSpread = 5)
         val allMultiFile = context.hubStats.multiFileChanges
-        // With < 6 modules the >= 5 partner-module predicate is unsatisfiable;
-        // a perfect score there would be structural, not architectural.
-        val hubsMeaningful = incidences.size >= 6
+        val hubFiles = context.hubFiles(minParticipation = 20, minModuleSpread = 5)
+        // With < 6 modules the >= 5 partner-module predicate is unsatisfiable; a perfect
+        // score there would be structural, not architectural. The count has to be the one
+        // the HUB PREDICATE ranges over — declared modules across every multi-file unit —
+        // not `incidences`, which since the provenance change counts only modules appearing
+        // in declared-projected units. A repo with plenty of declared modules but few such
+        // units was reporting null with a "needs >= 6 modules" hint that did not fit.
+        val hubModules = allMultiFile
+            .flatMap { unit -> unit.files.filter(::declared).map(boundaries::moduleOf) }
+            .toSet()
+        val hubsMeaningful = hubModules.size >= 6
         val hubAvoiding = allMultiFile.count { change -> change.files.none { it in hubFiles } }
 
         val hotspots = context.pairs(minTogether = 5)

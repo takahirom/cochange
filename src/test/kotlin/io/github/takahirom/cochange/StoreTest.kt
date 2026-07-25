@@ -200,7 +200,8 @@ class AnalysisReuseCommandTest {
         // ...and metrics must report the snapshot's unit count, not the whole history's.
         val scoped = MetricsCommand().test(listOf(repo.path, "--analysis", "recent-only", "--json"))
         val whole = MetricsCommand().test(listOf(repo.path, "--change-unit", "commit", "--json"))
-        val units = { s: String -> Regex("\"multiFileUnits\"\\s*:\\s*(\\d+)").find(s)!!.groupValues[1].toInt() }
+        val reader = Json { ignoreUnknownKeys = true }
+        val units = { s: String -> reader.decodeFromString(MetricsReport.serializer(), s).multiFileUnits }
         assertTrue(
             units(scoped.stdout) < units(whole.stdout),
             "metrics saw ${units(scoped.stdout)} units with --analysis and ${units(whole.stdout)} without; " +

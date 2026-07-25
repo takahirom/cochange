@@ -66,11 +66,13 @@ object Surprise {
      * findings list uses.
      *
      * This is a ranking heuristic (tier: interpretation), and it is NOT a claim that
-     * evidence always wins: two files that changed five times and always together
-     * have a higher Wilson-bounded similarity than a pair that co-changed 20 of 25
-     * times, and a large surprise gap can outrank a modest evidence gap in either
-     * direction. Both inputs are published on every finding (`evidenceStrength`,
-     * `nameSimilarity`) precisely so a consumer can re-rank instead of trusting this.
+     * evidence always wins. Two files that changed five times and always together do have
+     * the higher Wilson-bounded *ratio* (0.57 against 0.49 for a 20-of-25 pair), but the
+     * lower [evidenceStrength] (1.01 against 1.49) once log support is folded in — so when
+     * the 5-of-5 pair ranks higher it is the name demotion doing it, not better evidence.
+     * That trade is deliberate, and both inputs are published on every finding
+     * (`evidenceStrength`, `nameSimilarity`) precisely so a consumer can re-rank instead
+     * of trusting this.
      */
     fun interest(pair: AnalysisContext.PairStat): Double {
         val e = evidenceStrength(pair.together, pair.countA, pair.countB)

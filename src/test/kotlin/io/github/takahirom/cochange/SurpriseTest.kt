@@ -71,12 +71,14 @@ class SurpriseTest {
 
     /**
      * The honest limit of the ranking. `interest` multiplies two signals, so a large
-     * surprise gap CAN outrank an evidence gap: a 5-of-5 pair with unrelated names
-     * can beat a 20-of-25 pair whose names already predicted the coupling. That is
-     * not a bug to tune away — a pair that changed five times and always together
-     * has a higher Wilson-bounded similarity than one that co-changed 20 of 25 times.
-     * What must hold is that the demotion is bounded and both inputs are published,
-     * so a consumer can re-rank on evidence alone.
+     * surprise gap CAN outrank an evidence gap: a 5-of-5 pair with unrelated names can
+     * beat a 20-of-25 pair whose names already predicted the coupling.
+     *
+     * The 5-of-5 pair has the higher Wilson-bounded ratio but the LOWER
+     * `evidenceStrength`, so this ordering is the name demotion overriding measured
+     * strength — a deliberate trade, not a claim that the smaller sample is better
+     * evidenced. What must hold is that the demotion is bounded and both inputs are
+     * published, so a consumer can re-rank on evidence alone.
      */
     @Test
     fun `surprise can outweigh evidence, and the raw inputs are there to undo it`() {

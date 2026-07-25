@@ -41,8 +41,14 @@ class AnalysisContext(
     val excludedRoles: Set<String> = emptySet(),
 ) {
     /** True when [path]'s role was excluded, so it should not be shown or reported on. */
+    // isVisible runs per pair endpoint, so on a large repo FileRole.of would re-lowercase
+    // and re-scan the same paths hundreds of thousands of times.
+    private val roleCache = HashMap<String, String>()
+
+    private fun roleOf(path: String): String = roleCache.getOrPut(path) { FileRole.of(path, generated) }
+
     fun isHidden(path: String): Boolean =
-        excludedRoles.isNotEmpty() && FileRole.of(path, generated) in excludedRoles
+        excludedRoles.isNotEmpty() && roleOf(path) in excludedRoles
 
     /** A file worth showing: still present at HEAD, and not hidden by an excluded role. */
     fun isVisible(path: String): Boolean = path in headFiles && !isHidden(path)
@@ -58,7 +64,7 @@ class AnalysisContext(
     /** How many analyzed files each excluded role is hiding, for the "and here's what you're not seeing" line. */
     val hiddenByRole: Map<String, Int> by lazy {
         if (excludedRoles.isEmpty()) emptyMap() else analyzedFiles
-            .groupingBy { FileRole.of(it, generated) }.eachCount()
+            .groupingBy(::roleOf).eachCount()
             .filterKeys { it in excludedRoles }
     }
 

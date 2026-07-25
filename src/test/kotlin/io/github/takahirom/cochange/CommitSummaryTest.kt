@@ -118,6 +118,38 @@ class MergeAndRenameChurnTest {
         )
     }
 
+    /**
+     * An octopus merge has more than two parents. `-m` asks git for a diff against every
+     * one of them, so a side parent's contribution would be counted as churn the merge
+     * change unit never attributed to it — `--diff-merges=first-parent` asks the question
+     * the change unit actually asked.
+     */
+    @Test
+    fun `an octopus merge reports only its first-parent diff`() {
+        git("init", "-q", "-b", "main")
+        git("config", "user.email", "dev@example.com")
+        git("config", "user.name", "Dev")
+        commit("Initial", "app/A.kt" to "0\n", "core/B.kt" to "0\n", "extra/C.kt" to "0\n")
+        // Two side branches, each touching a different file.
+        git("checkout", "-q", "-b", "one")
+        commit("On one", "core/B.kt" to "one\n")
+        git("checkout", "-q", "main")
+        git("checkout", "-q", "-b", "two")
+        commit("On two", "extra/C.kt" to "two\n")
+        git("checkout", "-q", "main")
+        commit("On main", "app/A.kt" to "main\n")
+        git("-c", "commit.gpgsign=false", "merge", "-q", "--no-ff", "-m", "Octopus", "one", "two")
+        val octopus = git("rev-parse", "HEAD").trim()
+
+        val files = setOf("app/A.kt", "core/B.kt", "extra/C.kt")
+        val summary = GitLog.commitSummaries(repo, listOf(octopus), files).single()
+        assertEquals("Octopus", summary.subject)
+        assertEquals(
+            setOf("core/B.kt", "extra/C.kt"), summary.churn.keys,
+            "the first-parent diff is what the merge brought in; app/A.kt was already on main",
+        )
+    }
+
     @Test
     fun `a renamed file's churn is attributed to its current path`() {
         // git -M writes a rename as "old => new" or "pre/{old => new}/post"; matching
