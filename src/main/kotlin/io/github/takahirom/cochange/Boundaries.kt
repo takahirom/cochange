@@ -10,6 +10,8 @@ package io.github.takahirom.cochange
 enum class ModuleSource(val declared: Boolean, val label: String) {
     BUILD_FILE(true, "nearest directory with a build file"),
     SWIFT_TARGET(true, "SwiftPM Sources/Tests target directory"),
+    GO_PACKAGE(true, "Go package directory"),
+    PYTHON_PACKAGE(true, "Python package directory (__init__.py)"),
     USER_GLOB(true, "--module-root glob"),
     ROOT_BUILD_FILE(true, "repository root (build file at top level)"),
     TOP_LEVEL_DIR(false, "top-level directory (guessed — no build file covers this path)"),
@@ -81,6 +83,19 @@ class Boundaries(headFiles: Set<String>, moduleRootGlobs: List<String> = emptyLi
             }
         }
 
+        // Some languages declare their unit of code organization by directory rather
+        // than by a per-directory build file. Go has exactly one go.mod for a whole
+        // repository, so build files alone see one module and every boundary finding
+        // is withheld — while the language's own unit, the package, is "the directory".
+        // Python says the same thing with __init__.py. These are language rules, not
+        // guesses about a layout, which is why they count as declared.
+        val fromGoPackages = headFiles
+            .filter { it.endsWith(".go") }
+            .map { it.substringBeforeLast('/', "") }
+        val fromPythonPackages = headFiles
+            .filter { it.substringAfterLast('/') == "__init__.py" }
+            .map { it.substringBeforeLast('/', "") }
+
         // User-supplied module roots: globs matched against every directory
         // prefix of the tracked files (e.g. --module-root 'legacy/ios/Targets/*').
         val globs = moduleRootGlobs.map(GitLog::globToRegex)
@@ -96,9 +111,11 @@ class Boundaries(headFiles: Set<String>, moduleRootGlobs: List<String> = emptyLi
             dirs.filter { dir -> globs.any { it.matches(dir) } }
         }
 
-        val tagged = fromBuildFiles.map { it to ModuleSource.BUILD_FILE } +
+        val tagged = fromGlobs.map { it to ModuleSource.USER_GLOB } +
+            fromBuildFiles.map { it to ModuleSource.BUILD_FILE } +
             fromSwiftTargets.map { it to ModuleSource.SWIFT_TARGET } +
-            fromGlobs.map { it to ModuleSource.USER_GLOB }
+            fromGoPackages.map { it to ModuleSource.GO_PACKAGE } +
+            fromPythonPackages.map { it to ModuleSource.PYTHON_PACKAGE }
         tagged
             .distinctBy { it.first }
             .sortedByDescending { it.first.length }
@@ -109,9 +126,15 @@ class Boundaries(headFiles: Set<String>, moduleRootGlobs: List<String> = emptyLi
     /** True when the repository root itself is a module (build file at top level). */
     private val rootIsModule = moduleRoots.any { it.first.isEmpty() }
 
+    private fun covers(root: String, dir: String) = root.isNotEmpty() && (dir == root || dir.startsWith("$root/"))
+
     private fun resolve(path: String): Pair<String, ModuleSource> = cache.getOrPut(path) {
         val dir = path.substringBeforeLast('/', "")
-        val root = moduleRoots.firstOrNull { (r, _) -> r.isNotEmpty() && (dir == r || dir.startsWith("$r/")) }
+        // Nearest root wins, EXCEPT that an explicit --module-root is authoritative:
+        // a user who says `--module-root 'internal/*'` means internal/a is the module,
+        // and the Go packages nested inside it must not subdivide it further.
+        val root = moduleRoots.firstOrNull { (r, src) -> src == ModuleSource.USER_GLOB && covers(r, dir) }
+            ?: moduleRoots.firstOrNull { (r, _) -> covers(r, dir) }
         when {
             root != null -> root.first to root.second
             // Single-module repo: paths not claimed by a nested module all belong

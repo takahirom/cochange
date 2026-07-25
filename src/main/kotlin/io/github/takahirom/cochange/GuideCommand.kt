@@ -72,7 +72,10 @@ private val GUIDE_TOPICS: Map<String, String> = linkedMapOf(
              declared modules, boundary_mismatch and unstable_hub are WITHHELD
              entirely, not empty. Low coverage means individual pairs were
              dropped instead. Either way: inspect the directory layout and
-             re-run with --module-root '<dir-pattern>/*'.
+             re-run with --module-root '<dir-pattern>/*'. Go and Python
+             packages are detected from the language's own rule (a directory
+             of .go files; a directory with __init__.py), so those need no
+             flag; an explicit --module-root always wins over them.
           2. cochange findings <repo> --json
              Findings are grouped source-first; within boundary_mismatch they
              are ordered by `interest`, and the other two types keep detector

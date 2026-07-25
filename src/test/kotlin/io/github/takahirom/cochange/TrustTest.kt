@@ -184,3 +184,99 @@ class DetectorGateTest {
         )
     }
 }
+
+/**
+ * Some languages declare their unit of code organization by directory instead of by
+ * a per-directory build file. A Go repository has exactly one `go.mod`, so build
+ * files alone saw one module and every boundary finding was withheld — on the whole
+ * ecosystem. The package IS the directory, by the language's own rule.
+ */
+class LanguagePackageBoundariesTest {
+    @Test
+    fun `go packages are declared module roots, so a single go-mod repo still has boundaries`() {
+        val files = setOf(
+            "go.mod", "main.go",
+            "pkg/cmd/pr/create.go", "pkg/cmd/pr/create_test.go",
+            "pkg/cmd/issue/create.go",
+        )
+        val boundaries = Boundaries(files)
+        assertEquals(ModuleSource.GO_PACKAGE, boundaries.sourceOf("pkg/cmd/pr/create.go"))
+        assertEquals("pkg/cmd/pr", boundaries.moduleOf("pkg/cmd/pr/create.go"))
+        assertEquals("pkg/cmd/issue", boundaries.moduleOf("pkg/cmd/issue/create.go"))
+        val detection = boundaries.detection(files)
+        assertEquals(1.0, detection.coverage)
+        assertTrue(detection.declaredModuleCount >= 2, "one go.mod must not mean one module")
+        assertTrue(ModuleGate.report(detection).moduleFindingsEnabled)
+    }
+
+    @Test
+    fun `a python package directory is a declared module root`() {
+        val files = setOf(
+            "pyproject.toml",
+            "src/app/__init__.py", "src/app/views.py",
+            "src/app/api/__init__.py", "src/app/api/routes.py",
+        )
+        val boundaries = Boundaries(files)
+        assertEquals(ModuleSource.PYTHON_PACKAGE, boundaries.sourceOf("src/app/api/routes.py"))
+        assertEquals("src/app/api", boundaries.moduleOf("src/app/api/routes.py"))
+        assertEquals("src/app", boundaries.moduleOf("src/app/views.py"))
+    }
+
+    @Test
+    fun `a directory without the language marker is not a package`() {
+        // No __init__.py here, so scripts/ is not a package: it falls back to the
+        // root module the build file declares, not to a module of its own.
+        val files = setOf("pyproject.toml", "scripts/deploy.py", "src/app/__init__.py")
+        val boundaries = Boundaries(files)
+        assertEquals(ModuleSource.ROOT_BUILD_FILE, boundaries.sourceOf("scripts/deploy.py"))
+        assertEquals("<root>", boundaries.moduleOf("scripts/deploy.py"))
+    }
+
+    @Test
+    fun `an explicit module root overrides the language default`() {
+        val files = setOf("go.mod", "internal/a/x.go", "internal/a/deep/y.go")
+        val boundaries = Boundaries(files, moduleRootGlobs = listOf("internal/*"))
+        assertEquals(ModuleSource.USER_GLOB, boundaries.sourceOf("internal/a/deep/y.go"))
+        assertEquals("internal/a", boundaries.moduleOf("internal/a/deep/y.go"))
+    }
+}
+
+/**
+ * Per-crate `Cargo.toml` files bumped by one release, or per-locale `strings.xml`
+ * files translated together, cross module boundaries by process. Reporting them as
+ * refactoring candidates — and calling them "interface/implementation pairs" —
+ * described the wrong thing.
+ */
+class VariantSetTest {
+    @Test
+    fun `the same file name under sibling directories is a variant set`() {
+        assertTrue(CouplingKind.siblingVariants("crates/cli/Cargo.toml", "crates/grep/Cargo.toml"))
+        assertTrue(CouplingKind.siblingVariants("res/values/strings.xml", "res/values-ja/strings.xml"))
+        // Different names, same directory pair: not a variant set.
+        assertFalse(CouplingKind.siblingVariants("crates/cli/main.rs", "crates/grep/lib.rs"))
+        // Same name but not siblings: app/Foo.kt vs deep/nested/Foo.kt.
+        assertFalse(CouplingKind.siblingVariants("app/Foo.kt", "core/nested/Foo.kt"))
+        // Same directory: not variants of each other.
+        assertFalse(CouplingKind.siblingVariants("a/x.toml", "a/x.toml"))
+    }
+
+    @Test
+    fun `a variant set is costed as process, not as a refactor`() {
+        val estimate = CouplingKind.of(
+            "crates/cli/Cargo.toml", "crates/grep/Cargo.toml",
+            FileCategory.BUILD, namesRelated = true,
+        )
+        assertEquals("variant-set", estimate.kind)
+        assertEquals("none", estimate.effort, "there is no refactor to do here")
+        assertTrue("lockstep" in estimate.note, estimate.note)
+    }
+
+    @Test
+    fun `a genuine companion pair is still costed as a companion`() {
+        val estimate = CouplingKind.of(
+            "domain/PaymentRepository.kt", "data/DefaultPaymentRepository.kt",
+            FileCategory.SOURCE, namesRelated = true,
+        )
+        assertEquals("companion", estimate.kind)
+    }
+}

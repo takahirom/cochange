@@ -86,6 +86,19 @@ object CouplingKind {
         }
     }
 
+    /**
+     * Same file name, and the two parent directories are siblings — `crates/a/Cargo.toml`
+     * and `crates/b/Cargo.toml`, `values/strings.xml` and `values-ja/strings.xml`. Purely
+     * structural, no per-ecosystem name list.
+     */
+    fun siblingVariants(a: String, b: String): Boolean {
+        if (a.substringAfterLast('/') != b.substringAfterLast('/')) return false
+        val parentA = a.substringBeforeLast('/', "")
+        val parentB = b.substringBeforeLast('/', "")
+        if (parentA == parentB) return false
+        return parentA.substringBeforeLast('/', "") == parentB.substringBeforeLast('/', "")
+    }
+
     fun of(a: String, b: String, category: String, namesRelated: Boolean): Estimate {
         val ka = langKey(a)
         val kb = langKey(b)
@@ -102,6 +115,14 @@ object CouplingKind {
             ka != kb -> Estimate(
                 "cross-language", "high",
                 "the two files are in different languages ($ka vs $kb) — a design coupling across a platform boundary is expensive to break; weigh it against the impact before committing.",
+            )
+            // Identical basename in sibling directories: a variant/lockstep set
+            // (per-crate Cargo.toml bumped by one release, values-*/strings.xml
+            // translated together). Calling that "interface/implementation" was
+            // simply the wrong description of the same low-surprise situation.
+            siblingVariants(a, b) -> Estimate(
+                "variant-set", "none",
+                "the same file name under sibling directories — a variant or lockstep set (coordinated version bumps, translations, per-target manifests). The coupling is the process, not an architectural boundary problem.",
             )
             namesRelated -> Estimate(
                 "companion", "low",
@@ -180,7 +201,11 @@ class BoundaryMismatchDetector(
                     "(${pct(reverse)}) — the coupling is one-directional, so ${name(other)} may simply be a widely shared file."
             )
             if (rarerCount < 10) add("Only $rarerCount changes to ${name(rarer)} in the analyzed period — small sample.")
-            if (namesRelated(p.a, p.b)) add(
+            if (CouplingKind.siblingVariants(p.a, p.b)) add(
+                "Same file name under sibling directories (${p.a.substringAfterLast('/')}) — a variant or lockstep " +
+                    "set. Coordinated version bumps, translations and per-target manifests move together by process, " +
+                    "so crossing a module boundary here is expected rather than a design problem."
+            ) else if (namesRelated(p.a, p.b)) add(
                 "The file names look like an interface/implementation or companion pair — this coupling is expected " +
                     "and carries less architectural surprise than coupling between unrelated names."
             )
