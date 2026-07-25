@@ -1,10 +1,45 @@
 package io.github.takahirom.cochange
 
 /**
+ * How one file's module was resolved. The distinction that matters is
+ * [declared]: a module root backed by something the repository actually says
+ * (a build file, a SwiftPM target directory, a user-supplied glob) versus a
+ * guess made because nothing said anything. `moduleOf` always answers, so
+ * without this the two are indistinguishable in the output.
+ */
+enum class ModuleSource(val declared: Boolean, val label: String) {
+    BUILD_FILE(true, "nearest directory with a build file"),
+    SWIFT_TARGET(true, "SwiftPM Sources/Tests target directory"),
+    USER_GLOB(true, "--module-root glob"),
+    ROOT_BUILD_FILE(true, "repository root (build file at top level)"),
+    TOP_LEVEL_DIR(false, "top-level directory (guessed — no build file covers this path)"),
+    UNRESOLVED(false, "repository root (guessed — no module roots detected at all)"),
+}
+
+/**
+ * What module detection actually managed to resolve, so a reader (or an agent)
+ * can tell "these are real module boundaries" from "these are directory names".
+ * [coverage] is the share of files whose module came from a declared boundary.
+ */
+data class ModuleDetection(
+    val totalFiles: Int,
+    val bySource: Map<ModuleSource, Int>,
+    val moduleCount: Int,
+) {
+    val declaredFiles: Int = bySource.entries.filter { it.key.declared }.sumOf { it.value }
+    val coverage: Double = if (totalFiles == 0) 0.0 else declaredFiles.toDouble() / totalFiles
+
+    /** The declared signals that were actually used, best-first — the "method" half of provenance. */
+    val methods: List<ModuleSource> = ModuleSource.entries.filter { it.declared && (bySource[it] ?: 0) > 0 }
+}
+
+/**
  * Maps a file path to its module. Modules are detected from the file list at
  * HEAD: any directory containing a build file (Gradle/npm/Cargo/Go) is a
  * module root; files resolve to their nearest module root. Falls back to the
- * top-level directory when no build files exist.
+ * top-level directory when no build files exist — [sourceOf] and [detection]
+ * report which of the two happened, because a fallback answer looks exactly
+ * like a real one otherwise.
  */
 class Boundaries(headFiles: Set<String>, moduleRootGlobs: List<String> = emptyList()) {
     // A deliberately thin list of common cases — not a catalog of every build
@@ -15,7 +50,8 @@ class Boundaries(headFiles: Set<String>, moduleRootGlobs: List<String> = emptyLi
         "BUILD.bazel", "BUILD", "pyproject.toml", "setup.py", "CMakeLists.txt", "mix.exs",
     )
 
-    private val moduleRoots: List<String> = run {
+    /** Detected module roots, longest-first (nearest wins), each tagged with the signal that found it. */
+    private val moduleRoots: List<Pair<String, ModuleSource>> = run {
         val fromBuildFiles = headFiles
             .filter { it.substringAfterLast('/') in buildFileNames }
             .map { it.substringBeforeLast('/', "") }
@@ -54,26 +90,46 @@ class Boundaries(headFiles: Set<String>, moduleRootGlobs: List<String> = emptyLi
             dirs.filter { dir -> globs.any { it.matches(dir) } }
         }
 
-        (fromBuildFiles + fromSwiftTargets + fromGlobs)
-            .distinct()
-            .sortedByDescending { it.length }
+        val tagged = fromBuildFiles.map { it to ModuleSource.BUILD_FILE } +
+            fromSwiftTargets.map { it to ModuleSource.SWIFT_TARGET } +
+            fromGlobs.map { it to ModuleSource.USER_GLOB }
+        tagged
+            .distinctBy { it.first }
+            .sortedByDescending { it.first.length }
     }
 
-    private val cache = HashMap<String, String>()
+    private val cache = HashMap<String, Pair<String, ModuleSource>>()
 
     /** True when the repository root itself is a module (build file at top level). */
-    private val rootIsModule = moduleRoots.contains("")
+    private val rootIsModule = moduleRoots.any { it.first.isEmpty() }
 
-    fun moduleOf(path: String): String = cache.getOrPut(path) {
+    private fun resolve(path: String): Pair<String, ModuleSource> = cache.getOrPut(path) {
         val dir = path.substringBeforeLast('/', "")
-        val root = moduleRoots.firstOrNull { it.isNotEmpty() && (dir == it || dir.startsWith("$it/")) }
+        val root = moduleRoots.firstOrNull { (r, _) -> r.isNotEmpty() && (dir == r || dir.startsWith("$r/")) }
         when {
-            root != null -> root
+            root != null -> root.first to root.second
             // Single-module repo: paths not claimed by a nested module all belong
             // to the root module, not to their top-level directory.
-            rootIsModule -> "<root>"
-            path.contains('/') -> path.substringBefore('/')
-            else -> "<root>"
+            rootIsModule -> "<root>" to ModuleSource.ROOT_BUILD_FILE
+            path.contains('/') -> path.substringBefore('/') to ModuleSource.TOP_LEVEL_DIR
+            else -> "<root>" to ModuleSource.UNRESOLVED
         }
+    }
+
+    fun moduleOf(path: String): String = resolve(path).first
+
+    /** Which signal produced [moduleOf]'s answer for [path]. */
+    fun sourceOf(path: String): ModuleSource = resolve(path).second
+
+    /** Provenance and coverage of module detection over [files]. */
+    fun detection(files: Collection<String>): ModuleDetection {
+        val bySource = HashMap<ModuleSource, Int>()
+        val modules = HashSet<String>()
+        for (file in files) {
+            val (module, source) = resolve(file)
+            bySource.merge(source, 1, Int::plus)
+            modules.add(module)
+        }
+        return ModuleDetection(totalFiles = files.size, bySource = bySource, moduleCount = modules.size)
     }
 }

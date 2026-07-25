@@ -13,6 +13,13 @@ interface FindingDetector {
     /** One sentence: what this detector finds and why it matters. */
     val description: String
 
+    /**
+     * True when this detector's findings assert something about module
+     * boundaries. Those detectors are withheld entirely when module detection
+     * did not resolve real boundaries for this repository — see [ModuleGate].
+     */
+    val requiresModuleBoundaries: Boolean get() = false
+
     fun detect(context: AnalysisContext): List<Finding>
 }
 
@@ -37,6 +44,18 @@ class AnalysisContext(
         val cb = categoryOf(b)
         return if (FileCategory.priority.indexOf(ca) >= FileCategory.priority.indexOf(cb)) ca else cb
     }
+
+    /**
+     * Files that both appear in the analyzed history and still exist at HEAD —
+     * the population every finding draws from, and therefore the population
+     * module-detection coverage is measured over.
+     */
+    val analyzedFiles: Set<String> by lazy {
+        changes.flatMap { it.files }.filterTo(HashSet()) { it in headFiles }
+    }
+
+    /** Provenance and coverage of module detection over [analyzedFiles]. */
+    val moduleDetection: ModuleDetection by lazy { boundaries.detection(analyzedFiles) }
 
     private val pathToId = HashMap<String, Int>()
     private val idToPath = ArrayList<String>()

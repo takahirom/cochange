@@ -44,8 +44,11 @@ class AnalyzerTest {
 
     @Test
     fun `same-module pairs are not boundary mismatches`() {
-        val head = setOf("app/build.gradle.kts", "app/A.kt", "app/B.kt")
-        val changes = List(10) { LogicalChange(listOf(commit("alice", "app/A.kt", "app/B.kt"))) }
+        // A second module exists, so the gate lets boundary findings run — the pair
+        // is simply inside one module.
+        val head = setOf("app/build.gradle.kts", "app/A.kt", "app/B.kt", "core/build.gradle.kts", "core/C.kt")
+        val changes = List(10) { LogicalChange(listOf(commit("alice", "app/A.kt", "app/B.kt"))) } +
+            List(3) { LogicalChange(listOf(commit("alice", "core/C.kt"))) }
         val findings = Analyzer(minSupport = 5, minConfidence = 0.6)
             .analyze(changes, Boundaries(head), head)
         assertTrue(findings.none { it.type == "boundary_mismatch" })
@@ -220,8 +223,11 @@ class CouplingKindTest {
         var t = 0L
         fun commit(vararg files: String): Commit { t += 3600 * 24; return Commit("h$t", "alice", t, "m", files.toList()) }
         // Kotlin↔Swift across modules: the detector must wire the estimate through.
-        val head = setOf("android/Screen.kt", "ios/Screen.swift")
-        val changes = List(8) { LogicalChange(listOf(commit("android/Screen.kt", "ios/Screen.swift"))) }
+        val head = setOf(
+            "android/build.gradle.kts", "android/Screen.kt",
+            "ios/Package.swift", "ios/Sources/App/Screen.swift",
+        )
+        val changes = List(8) { LogicalChange(listOf(commit("android/Screen.kt", "ios/Sources/App/Screen.swift"))) }
         val finding = Analyzer(minSupport = 5, minConfidence = 0.6)
             .analyze(changes, Boundaries(head), head)
             .single { it.type == "boundary_mismatch" }

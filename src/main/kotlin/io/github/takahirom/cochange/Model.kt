@@ -147,6 +147,10 @@ data class AnalysisResult(
     val analyzedCommits: Int,
     val logicalChanges: Int,
     val findings: List<Finding>,
-    /** The exact conditions this snapshot was produced under, so later commands can reuse them. Null for pre-0.5 caches. */
+    /** The conditions this snapshot was produced under, so later commands can reuse them. Null for pre-0.5 caches. */
     val options: AnalysisOptions? = null,
+    /** Provenance, coverage, and gate decision for module detection — the structure findings are built on. */
+    val moduleDetection: ModuleDetectionReport? = null,
+    /** Detector types withheld because their prerequisite structure wasn't reliable. */
+    val skippedDetectors: List<SkippedDetector> = emptyList(),
 )
