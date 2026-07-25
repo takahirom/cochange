@@ -50,6 +50,11 @@ data class ModuleDetection(
  * like a real one otherwise.
  */
 class Boundaries(headFiles: Set<String>, moduleRootGlobs: List<String> = emptyList()) {
+    private companion object {
+        /** Sources whose roots cover one directory and one language, not a subtree. */
+        val LANGUAGE_PACKAGE_SOURCES = setOf(ModuleSource.GO_PACKAGE, ModuleSource.PYTHON_PACKAGE)
+    }
+
     // A deliberately thin list of common cases — not a catalog of every build
     // system. Anything else is covered by --module-root globs, and the guide
     // tells AI agents to derive those from the repository layout.
@@ -89,9 +94,15 @@ class Boundaries(headFiles: Set<String>, moduleRootGlobs: List<String> = emptyLi
         // is withheld — while the language's own unit, the package, is "the directory".
         // Python says the same thing with __init__.py. These are language rules, not
         // guesses about a layout, which is why they count as declared.
+        // Go ignores directories named testdata, and any path element starting with
+        // "_" or "." — a fixture directory is not a package, and two synchronized
+        // fixture updates must not become a boundary finding between "modules".
+        fun goIgnored(dir: String) = dir.split('/')
+            .any { it == "testdata" || it.startsWith("_") || it.startsWith(".") }
         val fromGoPackages = headFiles
             .filter { it.endsWith(".go") }
             .map { it.substringBeforeLast('/', "") }
+            .filterNot(::goIgnored)
         val fromPythonPackages = headFiles
             .filter { it.substringAfterLast('/') == "__init__.py" }
             .map { it.substringBeforeLast('/', "") }
@@ -123,20 +134,37 @@ class Boundaries(headFiles: Set<String>, moduleRootGlobs: List<String> = emptyLi
 
     private val cache = HashMap<String, Pair<String, ModuleSource>>()
 
-    /** True when the repository root itself is a module (build file at top level). */
-    private val rootIsModule = moduleRoots.any { it.first.isEmpty() }
+    /**
+     * True when a BUILD FILE at the top level makes the repository root a module, so
+     * files no nested module claims belong to it. A root Go package must not do this:
+     * `main.go` at the top level says nothing about `scripts/deploy.sh`, and treating
+     * it as declared provenance manufactured boundaries out of unrelated files.
+     */
+    private val rootIsModule = moduleRoots.any { (path, source) ->
+        path.isEmpty() && source !in LANGUAGE_PACKAGE_SOURCES
+    }
 
-    private fun covers(root: String, dir: String) = root.isNotEmpty() && (dir == root || dir.startsWith("$root/"))
+    /**
+     * A language package covers exactly its own directory and its own language's files:
+     * Go and Python packages are per-directory, never recursive, and a shell script
+     * sitting in a Go package directory is not part of that package.
+     */
+    private fun covers(root: String, source: ModuleSource, path: String, dir: String): Boolean = when (source) {
+        ModuleSource.GO_PACKAGE -> dir == root && path.endsWith(".go")
+        ModuleSource.PYTHON_PACKAGE -> dir == root && path.endsWith(".py")
+        else -> root.isNotEmpty() && (dir == root || dir.startsWith("$root/"))
+    }
 
     private fun resolve(path: String): Pair<String, ModuleSource> = cache.getOrPut(path) {
         val dir = path.substringBeforeLast('/', "")
         // Nearest root wins, EXCEPT that an explicit --module-root is authoritative:
         // a user who says `--module-root 'internal/*'` means internal/a is the module,
         // and the Go packages nested inside it must not subdivide it further.
-        val root = moduleRoots.firstOrNull { (r, src) -> src == ModuleSource.USER_GLOB && covers(r, dir) }
-            ?: moduleRoots.firstOrNull { (r, _) -> covers(r, dir) }
+        val root = moduleRoots.firstOrNull { (r, src) ->
+            src == ModuleSource.USER_GLOB && covers(r, src, path, dir)
+        } ?: moduleRoots.firstOrNull { (r, src) -> covers(r, src, path, dir) }
         when {
-            root != null -> root.first to root.second
+            root != null -> (if (root.first.isEmpty()) "<root>" else root.first) to root.second
             // Single-module repo: paths not claimed by a nested module all belong
             // to the root module, not to their top-level directory.
             rootIsModule -> "<root>" to ModuleSource.ROOT_BUILD_FILE

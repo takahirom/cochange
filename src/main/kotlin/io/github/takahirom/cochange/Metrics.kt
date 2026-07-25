@@ -50,13 +50,21 @@ object Metrics {
 
     fun compute(context: AnalysisContext): RepoMetrics {
         val boundaries = context.boundaries
-        val multiFile = context.changes.filter { it.files.size >= 2 }
+        // Every score below is a statement about the module partition, so it may only
+        // use files whose module the repository actually declares. Including guessed
+        // assignments made these numbers describe directory names while the findings
+        // built on the same partition were being withheld for exactly that reason.
+        fun declared(path: String) = context.moduleIsDeclared(path)
+        val multiFile = context.changes
+            .map { change -> change to change.files.filter(::declared) }
+            .filter { (_, files) -> files.size >= 2 }
+            .map { (_, files) -> files }
 
         // Activity-weighted effective module count over changed-file incidences.
         val incidences = HashMap<String, Int>()
         var totalIncidences = 0
-        for (change in multiFile) {
-            for (file in change.files) {
+        for (files in multiFile) {
+            for (file in files) {
                 incidences.merge(boundaries.moduleOf(file), 1, Int::plus)
                 totalIncidences++
             }
@@ -66,22 +74,23 @@ object Metrics {
         }
         val partitionInformative = effectiveModules > 1.0001
 
-        val crossModule = multiFile.filter { change -> change.files.map(boundaries::moduleOf).toSet().size > 1 }
+        val crossModule = multiFile.filter { files -> files.map(boundaries::moduleOf).toSet().size > 1 }
         val localUnits = multiFile.size - crossModule.size
 
         // Chance-corrected locality: expected P(all k files land in one module)
         // under random placement weighted by module activity shares.
         val moduleShares = incidences.values.map { it.toDouble() / totalIncidences }
-        val expectedLocal = if (multiFile.isEmpty()) 0.0 else multiFile.sumOf { change ->
-            moduleShares.sumOf { p -> p.pow(change.files.size) }
+        val expectedLocal = if (multiFile.isEmpty()) 0.0 else multiFile.sumOf { files ->
+            moduleShares.sumOf { p -> p.pow(files.size) }
         } / multiFile.size
 
-        // Hubs: same predicate as UnstableHubDetector's defaults.
+        // Hubs: the same predicate as UnstableHubDetector's defaults, over the same
+        // declared-only population — the two used to disagree about which files count.
         val participation = HashMap<String, Int>()
         val partnerModules = HashMap<String, MutableSet<String>>()
-        for (change in multiFile) {
-            val modules = change.files.map(boundaries::moduleOf).toSet()
-            for (file in change.files) {
+        for (files in multiFile) {
+            val modules = files.map(boundaries::moduleOf).toSet()
+            for (file in files) {
                 participation.merge(file, 1, Int::plus)
                 partnerModules.getOrPut(file) { HashSet() }.addAll(modules - boundaries.moduleOf(file))
             }
@@ -92,16 +101,17 @@ object Metrics {
         // With < 6 modules the >= 5 partner-module predicate is unsatisfiable;
         // a perfect score there would be structural, not architectural.
         val hubsMeaningful = incidences.size >= 6
-        val hubAvoiding = multiFile.count { change -> change.files.none { it in hubFiles } }
+        val hubAvoiding = multiFile.count { files -> files.none { it in hubFiles } }
 
         val hotspots = context.pairs(minTogether = 5)
             .filter { context.isVisible(it.a) && context.isVisible(it.b) }
+            .filter { declared(it.a) && declared(it.b) }
             .filter { boundaries.moduleOf(it.a) != boundaries.moduleOf(it.b) }
             .filter { it.confidence >= 0.6 }
             .toList()
         val hotspotKeys = hotspots.map { setOf(it.a, it.b) }.toHashSet()
-        val hotspotFreeCross = crossModule.count { change ->
-            val files = change.files.toList()
+        val hotspotFreeCross = crossModule.count { changeFiles ->
+            val files = changeFiles.toList()
             files.indices.none { i ->
                 (i + 1 until files.size).any { j -> setOf(files[i], files[j]) in hotspotKeys }
             }

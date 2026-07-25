@@ -53,3 +53,42 @@ class FamiliesTest {
         assertTrue(Families.detect(ctx, ctx.boundaries).isEmpty())
     }
 }
+
+/**
+ * Family collapsing removes edges, so it must rest on a declared module. Under guessed
+ * boundaries every sibling service directory shares one top-level "module", which made
+ * two independent services' config files look like one variant set.
+ */
+class FamilyProvenanceTest {
+    private var t = 0L
+    private fun commit(vararg files: String): Commit {
+        t += 3600 * 24
+        return Commit("h$t", "dev", t, "m", files.toList())
+    }
+
+    private fun families(head: Set<String>): List<Families.Family> {
+        val changes = List(8) { LogicalChange(listOf(commit("services/orders/config.yml", "services/payments/config.yml"))) }
+        val boundaries = Boundaries(head)
+        return Families.detect(AnalysisContext(changes, boundaries, head), boundaries)
+    }
+
+    @Test
+    fun `a guessed module is not enough to collapse a family`() {
+        val head = setOf("services/orders/config.yml", "services/payments/config.yml")
+        assertTrue(
+            families(head).isEmpty(),
+            "both files resolve to the guessed module 'services'; collapsing would delete a real edge",
+        )
+    }
+
+    @Test
+    fun `a declared module still collapses its variant set`() {
+        val head = setOf(
+            "build.gradle.kts",
+            "services/orders/config.yml", "services/payments/config.yml",
+        )
+        val detected = families(head)
+        assertTrue(detected.isNotEmpty(), "one declared root module covers both, so the family stands")
+        assertEquals(2, detected.single().members.size)
+    }
+}

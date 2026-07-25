@@ -299,6 +299,31 @@ class BuildWiringEffortTest {
     }
 
     @Test
+    fun `a build file paired with production code is not called build wiring`() {
+        // categoryOfPair calls this pair "build" because one side is a build file. That
+        // must not become the claim "both files are build definitions" — the other side
+        // is production code, and this may be the leak the tool exists to find.
+        val estimate = CouplingKind.of(
+            "app/build.gradle.kts", "core/Pricing.kt",
+            FileCategory.BUILD, namesRelated = false,
+        )
+        assertTrue(estimate.kind != "build-wiring", "was ${estimate.kind}: ${estimate.note}")
+    }
+
+    @Test
+    fun `same-named source peers under sibling directories are not a variant set`() {
+        // services/orders/Router.kt and services/payments/Router.kt are architectural
+        // peers, possibly duplicated logic. "Expected, effort none" is the wrong verdict.
+        assertTrue(CouplingKind.siblingVariants("services/orders/Router.kt", "services/payments/Router.kt"))
+        val estimate = CouplingKind.of(
+            "services/orders/Router.kt", "services/payments/Router.kt",
+            FileCategory.SOURCE, namesRelated = true,
+        )
+        assertTrue(estimate.kind != "variant-set", "was ${estimate.kind}")
+        assertTrue(estimate.effort != "none", "a possible duplication must not be costed at zero")
+    }
+
+    @Test
     fun `a real cross-language source coupling is still expensive`() {
         val estimate = CouplingKind.of(
             "android/Screen.kt", "ios/Screen.swift",
@@ -318,5 +343,146 @@ class BuildWiringEffortTest {
         )
         assertEquals("variant-set", estimate.kind)
         assertEquals("none", estimate.effort)
+    }
+}
+
+/**
+ * A language package is a precise claim, and claiming too much manufactures boundaries.
+ * Go's own rule ignores `testdata` and any element starting with `_` or `.`; a package
+ * is one directory, never a subtree; and a shell script inside a package directory is
+ * not part of the package.
+ */
+class LanguagePackagePrecisionTest {
+    @Test
+    fun `go fixture directories are not packages`() {
+        val files = setOf(
+            "go.mod", "parser/parse.go",
+            "parser/testdata/good/input.go", "parser/testdata/bad/input.go",
+            "parser/_ignored/x.go", "parser/.hidden/y.go",
+        )
+        val boundaries = Boundaries(files)
+        assertEquals(ModuleSource.GO_PACKAGE, boundaries.sourceOf("parser/parse.go"))
+        // The fixtures are not packages of their own, so they all fall back to the module
+        // go.mod declares. Two synchronized fixture updates therefore cross no boundary —
+        // which is the point: they used to look like two modules changing together.
+        val fixtures = listOf("parser/testdata/good/input.go", "parser/testdata/bad/input.go", "parser/_ignored/x.go")
+        for (fixture in fixtures) {
+            assertTrue(
+                boundaries.sourceOf(fixture) != ModuleSource.GO_PACKAGE,
+                "$fixture is not a Go package: got ${boundaries.sourceOf(fixture)}",
+            )
+        }
+        assertEquals(1, fixtures.map(boundaries::moduleOf).toSet().size, "no boundary between fixture directories")
+    }
+
+    @Test
+    fun `a go package covers its own directory only, not its subtree`() {
+        val files = setOf("go.mod", "pkg/a/a.go", "pkg/a/sub/b.go")
+        val boundaries = Boundaries(files)
+        assertEquals("pkg/a", boundaries.moduleOf("pkg/a/a.go"))
+        assertEquals("pkg/a/sub", boundaries.moduleOf("pkg/a/sub/b.go"), "Go packages are per-directory")
+    }
+
+    @Test
+    fun `a root go package does not lend its provenance to unrelated files`() {
+        // No build file anywhere: main.go at the top level says nothing about a shell
+        // script in scripts/. Treating that as declared invented a boundary between them.
+        val files = setOf("main.go", "pkg/a/a.go", "scripts/deploy.sh")
+        val boundaries = Boundaries(files)
+        assertEquals(ModuleSource.GO_PACKAGE, boundaries.sourceOf("main.go"))
+        assertFalse(
+            boundaries.sourceOf("scripts/deploy.sh").declared,
+            "got ${boundaries.sourceOf("scripts/deploy.sh")}",
+        )
+    }
+
+    @Test
+    fun `a non-python file inside a python package is not part of it`() {
+        val files = setOf("src/app/__init__.py", "src/app/views.py", "src/app/schema.sql")
+        val boundaries = Boundaries(files)
+        assertEquals(ModuleSource.PYTHON_PACKAGE, boundaries.sourceOf("src/app/views.py"))
+        assertFalse(boundaries.sourceOf("src/app/schema.sql").declared)
+    }
+
+    @Test
+    fun `a real build file at the root still adopts uncovered files`() {
+        val files = setOf("pyproject.toml", "scripts/deploy.sh", "src/app/__init__.py")
+        val boundaries = Boundaries(files)
+        assertEquals(ModuleSource.ROOT_BUILD_FILE, boundaries.sourceOf("scripts/deploy.sh"))
+    }
+}
+
+/**
+ * Every metric is a function of the module partition, so it has to draw on the same
+ * declared-only population the findings do. It used to include guessed assignments —
+ * so a repository could see `boundary_mismatch` correctly withheld for a legacy pair
+ * while `metrics` counted that very pair as a boundary hotspot.
+ */
+class MetricsProvenanceTest {
+    private var t = 0L
+    private fun commit(vararg files: String): Commit {
+        t += 3600 * 24
+        return Commit("h$t", "dev", t, "m", files.toList())
+    }
+
+    @Test
+    fun `guessed folders do not become hotspots or modules`() {
+        val head = setOf(
+            "app/build.gradle.kts", "app/A.kt",
+            "core/build.gradle.kts", "core/B.kt",
+            "legacyA/X.kt", "legacyB/Y.kt",
+        )
+        val declaredOnly = List(6) { LogicalChange(listOf(commit("app/A.kt", "core/B.kt"))) }
+        val guessedToo = declaredOnly + List(6) { LogicalChange(listOf(commit("legacyA/X.kt", "legacyB/Y.kt"))) }
+
+        val withGuessed = Metrics.compute(AnalysisContext(guessedToo, Boundaries(head), head))
+        val withoutGuessed = Metrics.compute(AnalysisContext(declaredOnly, Boundaries(head), head))
+
+        assertEquals(
+            withoutGuessed.boundaryHotspots, withGuessed.boundaryHotspots,
+            "a guessed-folder pair is not a boundary hotspot",
+        )
+        assertEquals(
+            withoutGuessed.distinctModules, withGuessed.distinctModules,
+            "legacyA/legacyB are folder names, not modules",
+        )
+        assertEquals(
+            withoutGuessed.multiFileUnits, withGuessed.multiFileUnits,
+            "a change touching only guessed files contributes no module evidence",
+        )
+    }
+
+    @Test
+    fun `the hub predicate matches the detector's population`() {
+        // A hub over guessed folders only: the detector withholds it, so metrics must
+        // not list it either. Both now read the same declared-only population.
+        val head = setOf("a/H.kt") + (1..8).map { "m$it/F$it.kt" }
+        val changes = (1..25).map { i ->
+            LogicalChange(listOf(commit("a/H.kt", "m${(i % 8) + 1}/F${(i % 8) + 1}.kt")))
+        }
+        val context = AnalysisContext(changes, Boundaries(head), head)
+        val metrics = Metrics.compute(context)
+        val findings = Analyzer().run(context)
+        assertTrue(metrics.hubFiles.isEmpty(), "no module here is declared: ${metrics.hubFiles}")
+        assertTrue(findings.findings.none { it.type == "unstable_hub" })
+    }
+}
+
+/** A changelog moving with the code it describes is documentation upkeep, not a design coupling. */
+class DocumentationEffortTest {
+    @Test
+    fun `a docs pairing is not a cross-platform design coupling`() {
+        val estimate = CouplingKind.of(
+            "CHANGES.rst", "src/flask/app.py",
+            FileCategory.DOCS, namesRelated = false,
+        )
+        assertEquals("documentation", estimate.kind)
+        assertEquals("low", estimate.effort)
+    }
+
+    @Test
+    fun `generated still wins over documentation`() {
+        val estimate = CouplingKind.of("api.md", "api.pb.go", FileCategory.GENERATED, namesRelated = true)
+        assertEquals("generated", estimate.kind)
     }
 }

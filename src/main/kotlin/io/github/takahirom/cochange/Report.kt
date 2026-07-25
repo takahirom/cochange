@@ -32,7 +32,7 @@ data class RunContext(
 ) {
     companion object {
         val TIER_MEANINGS = mapOf(
-            EvidenceTier.EVIDENCE to "counted from commits; wrong only if the history was read wrong",
+            EvidenceTier.EVIDENCE to "counted from the history, as grouped into change units (see changeUnit, which is itself derived); wrong only if the history was read wrong",
             EvidenceTier.DERIVED to "structure inferred from the repository; best-effort, carries provenance",
             EvidenceTier.INTERPRETATION to "what a coupling might mean or cost; a review candidate, not a measurement",
         )
@@ -112,6 +112,13 @@ data class ClusterReport(
     val index: Int,
     val files: List<String>,
     val modules: List<String>,
+    /**
+     * The subset of [modules] backed by a declared root. Unlike a pair, a cluster used
+     * to publish bare module names, so a consumer could not tell `app` (a Gradle module)
+     * from `legacy` (a folder name) — and repository-wide coverage cannot answer that
+     * per cluster.
+     */
+    val declaredModules: List<String>,
     val strongPairs: Int,
     /** Sum of pair supports, so a file in n pairs contributes n times — a ranking weight, not a count. */
     val pairSupportVolume: Long,

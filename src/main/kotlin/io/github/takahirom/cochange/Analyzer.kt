@@ -99,9 +99,15 @@ object CouplingKind {
         return parentA.substringBeforeLast('/', "") == parentB.substringBeforeLast('/', "")
     }
 
+    /**
+     * [category] is the pair's category, which `categoryOfPair` sets from the LEAST
+     * source-like side — so a build file paired with production code is a `build` pair.
+     * Rules that describe *both* files must therefore test both files, not this.
+     */
     fun of(a: String, b: String, category: String, namesRelated: Boolean): Estimate {
         val ka = langKey(a)
         val kb = langKey(b)
+        val bothBuild = FileCategory.of(a) == FileCategory.BUILD && FileCategory.of(b) == FileCategory.BUILD
         return when {
             category == FileCategory.GENERATED -> Estimate(
                 "generated", "none",
@@ -111,7 +117,11 @@ object CouplingKind {
             // (per-crate Cargo.toml bumped by one release, per-locale strings.xml
             // translated together). Calling that "interface/implementation" was simply
             // the wrong description of the same low-surprise situation.
-            siblingVariants(a, b) -> Estimate(
+            // Declarative files only. Two source files with the same name under sibling
+            // feature directories (services/orders/Router.kt, services/payments/Router.kt)
+            // are architectural peers, and possibly duplicated logic — the last thing to
+            // tell a reader is "expected, effort none".
+            siblingVariants(a, b) && category != FileCategory.SOURCE -> Estimate(
                 "variant-set", "none",
                 "the same file name under sibling directories — a variant or lockstep set (coordinated version bumps, translations, per-target manifests). The coupling is the process, not an architectural boundary problem.",
             )
@@ -120,7 +130,14 @@ object CouplingKind {
             // how the build system is designed. Checked before the language rule, which
             // otherwise reads build.gradle.kts vs libs.versions.toml as "jvm vs toml,
             // a platform boundary that is expensive to break".
-            category == FileCategory.BUILD -> Estimate(
+            // One side is documentation. A changelog or a README that moves with the code
+            // it describes is documentation maintenance — and the language rule read
+            // CHANGES.rst x app.py as "rst vs py, a platform boundary expensive to break".
+            category == FileCategory.DOCS -> Estimate(
+                "documentation", "low",
+                "one side is documentation — a changelog or a README moving with the code it describes is documentation maintenance, not a design coupling. Worth knowing which docs a module drags along; not a refactoring target.",
+            )
+            bothBuild -> Estimate(
                 "build-wiring", "low",
                 "both files are build definitions — adding a dependency or bumping a version routinely touches several of them at once. Still worth reading as a boundary signal, but cheap to act on and partly inherent to the build system.",
             )
@@ -210,7 +227,7 @@ class BoundaryMismatchDetector(
                     "(${pct(reverse)}) — the coupling is one-directional, so ${name(other)} may simply be a widely shared file."
             )
             if (rarerCount < 10) add("Only $rarerCount changes to ${name(rarer)} in the analyzed period — small sample.")
-            if (CouplingKind.siblingVariants(p.a, p.b)) add(
+            if (CouplingKind.siblingVariants(p.a, p.b) && category != FileCategory.SOURCE) add(
                 "Same file name under sibling directories (${p.a.substringAfterLast('/')}) — a variant or lockstep " +
                     "set. Coordinated version bumps, translations and per-target manifests move together by process, " +
                     "so crossing a module boundary here is expected rather than a design problem."

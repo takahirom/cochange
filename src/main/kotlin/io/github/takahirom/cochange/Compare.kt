@@ -174,7 +174,12 @@ object Compare {
         /** Per-listed-file mean |delta| — the figure to trend across runs. */
         val meanAbsShift: Double,
         val moves: List<MoveJson>,
-        val tier: String = EvidenceTier.EVIDENCE,
+        /**
+         * Derived, not evidence: every rate is a share of change units (a derived
+         * grouping) and the report also carries inferred metadata such as the resolved
+         * unit and window nesting. The counts inside each move are the evidence.
+         */
+        val tier: String = EvidenceTier.DERIVED,
     )
 
     @Serializable

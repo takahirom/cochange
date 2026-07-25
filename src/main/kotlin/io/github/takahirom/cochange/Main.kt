@@ -234,6 +234,9 @@ class ClustersCommand : CliktCommand(
                             index = i + 1,
                             files = cluster.files,
                             modules = cluster.files.map { boundaries.moduleOf(it) }.distinct().sorted(),
+                            declaredModules = cluster.files
+                                .filter { setup.context.moduleIsDeclared(it) }
+                                .map { boundaries.moduleOf(it) }.distinct().sorted(),
                             strongPairs = cluster.edges.size,
                             pairSupportVolume = cluster.pairSupportVolume,
                             strongest = cluster.edges.firstOrNull()
@@ -416,7 +419,13 @@ class CompareCommand : CliktCommand(
 
         if (asJson) {
             echo(Compare.encode(
-                context = RunContext.of(baseSetup),
+                // Both setups' caveats: a malformed --recent resolves to now and every
+                // established file appears to cool to zero, which must not look clean.
+                context = RunContext.of(baseSetup).let {
+                    it.copy(warnings = (it.warnings + recentSetup.warnings.map { w ->
+                        w.copy(message = "recent window: ${w.message}")
+                    }).distinct())
+                },
                 minCount = minCount, category = category,
                 baseline = baseWindow, recent = recentWindow,
                 comparison = computed.copy(moves = moves),
@@ -425,7 +434,12 @@ class CompareCommand : CliktCommand(
             return
         }
 
-        if (baseSetup.shallow) echo("WARNING: shallow clone — windows are truncated, so the comparison is biased.", err = true)
+        for ((label, setup) in listOf("baseline" to baseSetup, "recent" to recentSetup)) {
+            for (w in setup.warnings) {
+                val tag = if (w.severity == AnalysisWarning.WARNING) "WARNING" else "note"
+                echo("$tag ($label window): ${w.message}", err = true)
+            }
+        }
         if (recentAlone != baseSetup.changeUnitName) {
             echo(
                 "WARNING: the recent window alone would be counted as \"$recentAlone\", not " +

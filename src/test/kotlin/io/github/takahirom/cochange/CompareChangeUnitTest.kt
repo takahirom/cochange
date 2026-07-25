@@ -128,3 +128,58 @@ class CompareChangeUnitTest {
             java.time.Instant.now().minus(java.time.Duration.ofDays(days)).toString()
     }
 }
+
+/**
+ * `compare` builds two setups, and only the baseline's caveats were reported. A
+ * malformed `--recent` resolves to now, so every established file appears to cool to
+ * zero — the most alarming output the tool can produce, and it looked clean.
+ */
+class CompareWarningsTest {
+    private val repo = File.createTempFile("cochange-compare-warn", "").apply { delete(); mkdirs() }
+
+    @AfterTest
+    fun cleanup() {
+        repo.deleteRecursively()
+    }
+
+    private fun git(vararg args: String) = GitLog.runGit(repo, args.toList())
+
+    private fun initRepo() {
+        git("init", "-q", "-b", "main")
+        git("config", "user.email", "t@example.com")
+        git("config", "user.name", "T")
+        for (i in 1..6) {
+            File(repo, "app/build.gradle.kts").apply { parentFile.mkdirs() }.writeText("// app")
+            File(repo, "core/build.gradle.kts").apply { parentFile.mkdirs() }.writeText("// core")
+            File(repo, "app/A.kt").writeText("a$i\n")
+            File(repo, "core/B.kt").writeText("b$i\n")
+            git("add", "-A")
+            git("-c", "commit.gpgsign=false", "commit", "-q", "-m", "change $i")
+        }
+    }
+
+    @Test
+    fun `a malformed recent window is reported, in JSON and in text`() {
+        initRepo()
+        val args = listOf(repo.path, "--baseline", "365 days ago", "--recent", "las year", "--min-count", "1")
+
+        val text = CompareCommand().test(args)
+        assertEquals(0, text.statusCode, text.output)
+        assertTrue(
+            text.output.contains("WARNING (recent window)") && text.output.contains("resolved to the current instant"),
+            "the recent window is what broke, and the output must say which: ${text.output}",
+        )
+
+        val json = CompareCommand().test(args + "--json")
+        assertEquals(0, json.statusCode, json.output)
+        val report = Json.decodeFromString(Compare.CompareReport.serializer(), json.stdout)
+        assertTrue(
+            report.context.warnings.any { it.code == AnalysisWarning.WINDOW_IS_NOW },
+            "warnings were ${report.context.warnings.map { it.code }}",
+        )
+    }
+
+    private companion object {
+        val Json = kotlinx.serialization.json.Json { ignoreUnknownKeys = true }
+    }
+}

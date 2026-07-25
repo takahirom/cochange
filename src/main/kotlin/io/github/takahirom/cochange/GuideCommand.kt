@@ -230,11 +230,13 @@ private val GUIDE_TOPICS: Map<String, String> = linkedMapOf(
              it over the raw ratio when comparing two findings OF THE SAME
              type. It is present for all three types, but each type's
              denominator differs, so it is not comparable across types.
-          2. evidence.nameSimilarity and evidence.interest exist for
+          2. ranking.nameSimilarity and ranking.interest exist for
              boundary_mismatch only — the other two types have no pair of names
              to compare, and the fields are null rather than faked. High
-             nameSimilarity means the names already predicted the coupling
-             (Foo / DefaultFoo): low architectural surprise. interest is what
+             ranking.nameSimilarity means the names already predicted the
+             coupling (Foo / DefaultFoo): low architectural surprise. They live
+             in `ranking`, not `evidence` — a ranking heuristic is not a count.
+             interest is what
              ordered the list, and interest can put a small-sample surprising
              pair above a well-supported predictable one. Sort by
              evidenceStrength yourself if that is not what you want.

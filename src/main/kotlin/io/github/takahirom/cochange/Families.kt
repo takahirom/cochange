@@ -37,7 +37,12 @@ object Families {
             if (members.size < minMembers) return@mapNotNull null
             // Distinct sibling directories (not several files in one dir).
             if (members.map { it.substringBeforeLast('/') }.toSet().size < minMembers) return@mapNotNull null
-            // One module and one category, so we never collapse across a boundary.
+            // One module and one category, so we never collapse across a boundary — and
+            // that module must be DECLARED. Under guessed boundaries every sibling
+            // service directory shares one top-level "module", so config.yml files from
+            // two independent services looked like one variant set and their edge was
+            // collapsed away.
+            if (members.any { !boundaries.sourceOf(it).declared }) return@mapNotNull null
             if (members.map { boundaries.moduleOf(it) }.toSet().size != 1) return@mapNotNull null
             if (members.map { context.categoryOf(it) }.toSet().size != 1) return@mapNotNull null
             if (!movesAsASet(context, members)) return@mapNotNull null

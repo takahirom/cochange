@@ -7,8 +7,11 @@ import kotlinx.serialization.Serializable
  * different kinds of statement, and reading them all as equally solid is the
  * fastest way to act on a false positive:
  *
- * - [EVIDENCE] — counted directly from commits: which files appeared in the
- *   same change, how often. Wrong only if the history was read wrong.
+ * - [EVIDENCE] — counted directly from the history: which files appeared in the
+ *   same change unit, how often. Wrong only if the history was read wrong. Note the
+ *   grouping into change units is itself [DERIVED] and is reported alongside: under
+ *   `author-window`, `together=1` can mean two commits ten minutes apart, not one
+ *   commit containing both files.
  * - [DERIVED] — structure inferred from the repository: modules, categories,
  *   roles, clusters, change units. Best-effort, and each carries provenance.
  * - [INTERPRETATION] — what a coupling might mean and what it might cost:
