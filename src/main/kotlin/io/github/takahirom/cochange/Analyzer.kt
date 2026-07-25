@@ -122,8 +122,11 @@ object CouplingKind {
         // localized strings.xml lands in SOURCE but is a resource, and calling a pair of
         // translations "parallel implementations, check for duplicated logic" was exactly
         // the false positive the variant-set rule exists to prevent. FileRole knows.
-        fun isCode(path: String, category: String) =
-            category == FileCategory.SOURCE && FileRole.of(path) == FileRole.SOURCE
+        // Code is anything in the SOURCE category that isn't a resource, a lockfile or
+        // generated output. A TEST file is code — narrowing this to FileRole.SOURCE
+        // described `list_test.go` as "configuration or a resource rather than code".
+        fun isCode(path: String, category: String) = category == FileCategory.SOURCE &&
+            FileRole.of(path) !in setOf(FileRole.RESOURCE, FileRole.LOCKFILE, FileRole.GENERATED)
         val aIsCode = isCode(a, ca)
         val bIsCode = isCode(b, cb)
         val bothSource = aIsCode && bIsCode

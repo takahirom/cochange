@@ -707,3 +707,40 @@ class NotOurStructureOrderingTest {
         assertEquals(ModuleSource.PYTHON_PACKAGE, boundaries.sourceOf("stubs/foo/api.pyi"))
     }
 }
+
+/**
+ * "Code" is not the same set as `FileRole.SOURCE`. A localized `strings.xml` sits in the
+ * SOURCE *category* but is a resource; a `_test.go` file is a different *role* but is
+ * still code. Getting either wrong produces a description that is false of the pair.
+ */
+class CodeVersusDeclarativeTest {
+    @Test
+    fun `localized resources are a variant set, not parallel implementations`() {
+        val a = "app/src/main/res/values/strings.xml"
+        val b = "app/src/main/res/values-ja/strings.xml"
+        assertTrue(CouplingKind.siblingVariants(a, b))
+        val estimate = CouplingKind.of(a, b, FileCategory.ofPair(a, b), namesRelated = true)
+        assertEquals("variant-set", estimate.kind, "a translation pair is not duplicated logic")
+        assertEquals("none", estimate.effort)
+    }
+
+    @Test
+    fun `a test file is code`() {
+        val estimate = CouplingKind.of(
+            "internal/gh/gh.go", "pkg/cmd/config/list/list_test.go",
+            FileCategory.SOURCE, namesRelated = false,
+        )
+        assertEquals("same-language", estimate.kind, "was ${estimate.note}")
+    }
+
+    @Test
+    fun `a C source and its header are companions, not a platform boundary`() {
+        for ((a, b) in listOf("src/foo.c" to "include/foo.h", "a/foo.cpp" to "a/foo.h", "a/foo.mm" to "a/foo.h")) {
+            val estimate = CouplingKind.of(a, b, FileCategory.SOURCE, namesRelated = true)
+            assertTrue(
+                estimate.kind != "cross-language",
+                "$a x $b is one native toolchain, not a platform boundary: got ${estimate.kind}",
+            )
+        }
+    }
+}
