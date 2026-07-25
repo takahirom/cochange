@@ -38,6 +38,13 @@ class StoreTest {
     }
 
     @Test
+    fun `snapshot records the analysis options for later reuse`() {
+        val opts = AnalysisOptions(since = "2 years ago", extraExcludes = listOf("**/*.swift"))
+        Store.save(repo, result(5).copy(options = opts), "lt", base)
+        assertEquals(opts, Store.load(repo, "lt", base)!!.options)
+    }
+
+    @Test
     fun `missing snapshot loads as null`() {
         assertNull(Store.load(repo, "nope", base))
     }
