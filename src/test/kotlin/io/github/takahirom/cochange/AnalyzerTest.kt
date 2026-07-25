@@ -232,6 +232,29 @@ class CouplingKindTest {
     }
 }
 
+class DistinguishingLabelsTest {
+    @Test
+    fun `different basenames use the basename`() {
+        assertEquals("App.kt" to "Repo.kt", distinguishingLabels("app/App.kt", "data/Repo.kt"))
+    }
+
+    @Test
+    fun `same basename adds the smallest distinguishing suffix`() {
+        assertEquals(
+            "values/strings.xml" to "values-ja/strings.xml",
+            distinguishingLabels("feature/home/values/strings.xml", "feature/home/values-ja/strings.xml"),
+        )
+    }
+
+    @Test
+    fun `keeps extending until the suffixes differ`() {
+        assertEquals(
+            "a/x/build.gradle.kts" to "b/x/build.gradle.kts",
+            distinguishingLabels("a/x/build.gradle.kts", "b/x/build.gradle.kts"),
+        )
+    }
+}
+
 class ClustersTest {
     private var t = 0L
     private fun change(vararg files: String): LogicalChange {

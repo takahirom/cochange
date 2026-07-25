@@ -35,6 +35,15 @@ cochange guide                                         # playbooks: which comman
 
 The only required input is a Git repository — zero config, language-agnostic, fully local.
 
+**Named snapshots.** By default each `analyze` overwrites the last result (and `finding-N` numbers shift). Name a run with `--save` to keep several side by side and read a specific one with `--analysis`:
+
+```bash
+cochange analyze . --since "2 years ago" --save long-term
+cochange analyze . --since "1 month ago" --save recent
+cochange findings . --analysis recent
+cochange inspect finding-1 . --analysis long-term
+```
+
 History-reading options (`--since`, `--branch`, `--change-unit`, …) apply **per command** — each one re-reads the Git log — so pass the same `--since` to every command to compare like with like. With no `--since` the whole history is used, and the run says so in its banner.
 
 **AI agents:** start with `cochange guide` — the playbooks (`explore`, `align-boundaries`, `reduce-change-tax`, `split-god-class`, `extract-module`, plus `reading` for how to weigh a finding) are written so an agent can operate the tool end to end without reading this README.

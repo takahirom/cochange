@@ -54,10 +54,12 @@ class Analyze : CliktCommand(
     private val history by HistoryOptions()
     private val minSupport by option("--min-support", help = "Minimum co-change count for a pair finding").int().restrictTo(min = 1).default(5)
     private val minConfidence by option("--min-confidence", help = "Minimum co-change ratio for a pair finding, P(other | rarer)").double().restrictTo(0.0, 1.0).default(0.6)
+    private val save by option("--save", help = "Name this analysis snapshot so it isn't overwritten by later runs (default: ${Store.DEFAULT_NAME})").default(Store.DEFAULT_NAME)
     private val asJson by option("--json", help = "Print the full result as JSON").flag()
 
     override fun run() {
         val repo = File(path).canonicalFile
+        Store.validateName(save)
         val start = System.currentTimeMillis()
         val setup = Analysis.contextFor(repo, history.toAnalysisOptions())
         if (!asJson) {
@@ -78,17 +80,19 @@ class Analyze : CliktCommand(
             logicalChanges = changes.size,
             findings = findings,
         )
-        Store.save(repo, result)
+        Store.save(repo, result, save)
 
         if (asJson) {
             echo(Store.encode(result))
         } else {
             val elapsed = (System.currentTimeMillis() - start) / 1000.0
             echo("Analyzed ${result.analyzedCommits} commits as ${changes.size} change units (unit: ${setup.changeUnitName}) in ${"%.1f".format(elapsed)}s")
+            if (save != Store.DEFAULT_NAME) echo("saved as analysis '$save' — read it with: cochange findings $path --analysis $save")
             echo("")
             printFindingsSummary(result, ::echo)
             echo("")
-            echo("Next: cochange inspect <finding-id> [$repo] — or cochange guide for the full playbook")
+            val analysisFlag = if (save != Store.DEFAULT_NAME) " --analysis $save" else ""
+            echo("Next: cochange inspect <finding-id> [$repo]$analysisFlag — or cochange guide for the full playbook")
         }
     }
 }
@@ -100,10 +104,11 @@ class Findings : CliktCommand(
     private val path by argument(help = "Path to the Git repository").default(".")
     private val type by option("--type", help = "Only findings of this type (e.g. boundary_mismatch, unstable_hub)")
     private val category by option("--category", help = "Only findings in this category (source, config, build, docs, generated)")
+    private val analysis by option("--analysis", help = "Which saved analysis snapshot to read (default: ${Store.DEFAULT_NAME})").default(Store.DEFAULT_NAME)
     private val asJson by option("--json").flag()
 
     override fun run() {
-        val loaded = loadOrFail(path)
+        val loaded = loadOrFail(path, analysis)
         val result = loaded.copy(findings = loaded.findings
             .filter { type == null || it.type == type }
             .filter { category == null || it.category == category })
@@ -184,8 +189,8 @@ class ClustersCommand : CliktCommand(
 
         fun strongestOf(cluster: Clusters.Cluster): String {
             val s = cluster.edges.first()
-            return "${s.a.substringAfterLast('/')} x ${s.b.substringAfterLast('/')} " +
-                "(${s.together} together, jaccard ${"%.2f".format(s.jaccard)})"
+            val (la, lb) = distinguishingLabels(s.a, s.b)
+            return "$la x $lb (${s.together} together, jaccard ${"%.2f".format(s.jaccard)})"
         }
 
         val showIdx = show
@@ -255,7 +260,8 @@ class MetricsCommand : CliktCommand(
         echo("boundary integrity     ${fmt(m.boundaryIntegrity)}  (${m.hotspotFreeCrossUnits}/${m.crossModuleUnits} cross-module units avoid the ${m.boundaryHotspots} recurring hotspot pairs)")
         m.topHotspot?.let { p ->
             val perYear = "%.1f".format(p.together / m.windowYears)
-            echo("                         top hotspot: ${p.a.substringAfterLast('/')} x ${p.b.substringAfterLast('/')} — ~$perYear double-edits/year")
+            val (la, lb) = distinguishingLabels(p.a, p.b)
+            echo("                         top hotspot: $la x $lb — ~$perYear double-edits/year")
         }
         echo("")
         val adjusted = m.adjustedLocality
@@ -299,18 +305,28 @@ class Inspect : CliktCommand(
 ) {
     private val id by argument(help = "Finding id, e.g. finding-3")
     private val path by argument(help = "Path to the Git repository").default(".")
+    private val analysis by option("--analysis", help = "Which saved analysis snapshot to read (default: ${Store.DEFAULT_NAME})").default(Store.DEFAULT_NAME)
 
     override fun run() {
-        val result = loadOrFail(path)
+        val result = loadOrFail(path, analysis)
         val finding = result.findings.find { it.id == id }
             ?: error("no finding '$id' — available: ${result.findings.joinToString(", ") { it.id }}")
         echo(Store.encode(finding))
     }
 }
 
-private fun loadOrFail(path: String): AnalysisResult {
+private fun loadOrFail(path: String, analysis: String = Store.DEFAULT_NAME): AnalysisResult {
     val repo = File(path).canonicalFile
-    val result = Store.load(repo) ?: error("no analysis found for $repo — run: cochange analyze $path")
+    Store.validateName(analysis)
+    val result = Store.load(repo, analysis) ?: run {
+        val saved = Store.list(repo)
+        val hint = when {
+            saved.isEmpty() -> "run: cochange analyze $path" + if (analysis != Store.DEFAULT_NAME) " --save $analysis" else ""
+            analysis !in saved -> "saved analyses: ${saved.joinToString(", ")}"
+            else -> "run: cochange analyze $path --save $analysis"
+        }
+        error("no analysis '$analysis' for $repo — $hint")
+    }
     if (result.headCommit.isNotEmpty()) {
         val current = runCatching { GitLog.headCommit(repo, null) }.getOrNull()
         if (current != null && current != result.headCommit) {

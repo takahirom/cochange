@@ -144,10 +144,9 @@ class BoundaryMismatchDetector(
         val other = if (p.countA <= p.countB) p.b else p.a
         val rarerCount = minOf(p.countA, p.countB)
         val otherCount = maxOf(p.countA, p.countB)
-        // Same basename on both sides (e.g. two README.md) needs full paths to disambiguate.
-        fun name(path: String) =
-            if (p.a.substringAfterLast('/') == p.b.substringAfterLast('/')) path
-            else path.substringAfterLast('/')
+        // Same basename on both sides (e.g. two README.md) needs a short disambiguating suffix.
+        val (labelA, labelB) = distinguishingLabels(p.a, p.b)
+        fun name(path: String) = if (path == p.a) labelA else labelB
 
         val category = context.categoryOfPair(p.a, p.b)
         val coupling = CouplingKind.of(p.a, p.b, category, namesRelated(p.a, p.b))
