@@ -184,3 +184,26 @@ class CompareWarningsTest {
         val Json = kotlinx.serialization.json.Json { ignoreUnknownKeys = true }
     }
 }
+
+/** An accepted argument that cannot affect the answer is a trap, not a convenience. */
+class CompareRejectsSinceTest {
+    private val repo = File.createTempFile("cochange-compare-since", "").apply { delete(); mkdirs() }
+
+    @AfterTest
+    fun cleanup() {
+        repo.deleteRecursively()
+    }
+
+    @Test
+    fun `compare rejects --since instead of overriding it`() {
+        GitLog.runGit(repo, listOf("init", "-q", "-b", "main"))
+        val result = CompareCommand().test(
+            listOf(repo.path, "--baseline", "180d", "--recent", "30d", "--since", "1 year ago"),
+        )
+        assertTrue(result.statusCode != 0, "was ${result.statusCode}: ${result.output}")
+        assertTrue(
+            result.output.contains("--baseline") && result.output.contains("--recent"),
+            "the error must name the options that do work: ${result.output}",
+        )
+    }
+}

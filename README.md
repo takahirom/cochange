@@ -51,7 +51,7 @@ cochange guide                                         # playbooks: which comman
 
 The only required input is a Git repository — zero config, language-agnostic, fully local.
 
-**Named snapshots.** By default each `analyze` overwrites the last result (and `finding-N` numbers shift). Name a run with `--save` to keep several side by side and read a specific one with `--analysis`:
+**Named snapshots.** Without `--save`, each `analyze` overwrites the default snapshot only — named ones are untouched — and its `finding-N` numbers shift. Name a run with `--save` to keep several side by side and read a specific one with `--analysis`:
 
 ```bash
 cochange analyze . --since "2 years ago" --save long-term

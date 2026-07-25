@@ -1,6 +1,7 @@
 package io.github.takahirom.cochange
 
 import com.github.ajalt.clikt.core.CliktCommand
+import com.github.ajalt.clikt.core.CliktError
 import com.github.ajalt.clikt.core.subcommands
 import com.github.ajalt.clikt.parameters.arguments.argument
 import com.github.ajalt.clikt.parameters.arguments.default
@@ -388,6 +389,15 @@ class CompareCommand : CliktCommand(
     override fun run() {
         val repo = File(path).canonicalFile
         val base = history.toAnalysisOptions()
+        // --since is inherited from the shared history options but has no meaning here:
+        // this command defines its own two windows. Silently overriding it would leave an
+        // accepted argument with no effect on the answer.
+        if (base.since != null) {
+            throw CliktError(
+                "compare defines its own windows — use --baseline and --recent instead of --since " +
+                    "(--since '${base.since}' would have been ignored).",
+            )
+        }
         val baseSetup = Analysis.contextFor(repo, base.copy(since = windowSince(baseline)))
         // Both windows must be counted in the same unit. --change-unit auto resolves
         // per window, so a repo that moved from merge commits to squashes would have
