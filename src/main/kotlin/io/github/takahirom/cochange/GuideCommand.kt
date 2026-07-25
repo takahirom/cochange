@@ -99,9 +99,10 @@ private val GUIDE_TOPICS: Map<String, String> = linkedMapOf(
           2. For each candidate, inspect it and check metrics: both directional
              probabilities strong -> genuine shared change reason. One-sided ->
              the partner may just be a widely shared file; deprioritize.
-          3. `git show --stat` two or three supportingChanges: what actually
-             changed together? An interface mirrored into an implementation?
-             A flag definition plus its fake?
+          3. Read two or three supportingCommits: subject and per-file churn
+             say what actually changed together. An interface mirrored into an
+             implementation? A flag definition plus its fake? Churn concentrated
+             on one side each time suggests one file is merely dragged along.
         Options to propose, in order of preference:
           - Move the pair into the module where the change reason lives.
           - Introduce an interface/abstraction that absorbs the shared reason,
@@ -140,8 +141,10 @@ private val GUIDE_TOPICS: Map<String, String> = linkedMapOf(
           1. cochange findings <repo> --type split_candidate --json
              The groups in the observation ARE the proposed split lines.
           2. Counter-check eras: groups can be old vs new caller generations
-             or platform variants, not separable responsibilities. Check both
-             groups appear in recent supportingChanges (`git show -s --format=%ci <hash>`).
+             or platform variants, not separable responsibilities. Compare each
+             group's firstSeen/lastSeen — if one ended where the other began,
+             that's a migration, not two responsibilities. (Those are bounds,
+             so a group idle in the middle still shows a wide range.)
           3. Read the file itself: do the groups map to methods/regions?
              If yes, propose extracting one group's responsibility first —
              usually the smaller, newer group is the cheaper extraction.
