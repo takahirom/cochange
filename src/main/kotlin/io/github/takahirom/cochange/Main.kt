@@ -266,7 +266,10 @@ class ClustersCommand : CliktCommand(
                                 .filterNot { setup.context.moduleIsDeclared(it) }.sorted(),
                             strongPairs = cluster.edges.size,
                             pairSupportVolume = cluster.pairSupportVolume,
-                            strongest = cluster.edges.firstOrNull()
+                            // The strongest edge whose endpoints are both shown; an
+                            // excluded role must not be named here either.
+                            strongest = cluster.edges
+                                .firstOrNull { setup.context.isVisible(it.a) && setup.context.isVisible(it.b) }
                                 ?.let { ClusterEdgeReport(it.a, it.b, it.together, round2(it.jaccard)) },
                             // Members are paths, so an excluded role must not appear here
                             // either — the family itself is unaffected by the filter.
@@ -290,8 +293,13 @@ class ClustersCommand : CliktCommand(
             return
         }
 
+        // The strongest VISIBLE edge: this line names two paths, so an excluded role must
+        // not appear in it. The cluster's counts above still include those edges.
+        fun strongestVisible(cluster: Clusters.Cluster) = cluster.edges
+            .firstOrNull { context.isVisible(it.a) && context.isVisible(it.b) }
+
         fun strongestOf(cluster: Clusters.Cluster): String {
-            val s = cluster.edges.first()
+            val s = strongestVisible(cluster) ?: return "(every strong pair here is hidden by --exclude-role)"
             val (la, lb) = distinguishingLabels(s.a, s.b)
             return "$la x $lb (${s.together} together, jaccard ${"%.2f".format(s.jaccard)})"
         }
@@ -304,7 +312,7 @@ class ClustersCommand : CliktCommand(
             }
             val cluster = clusters[showIdx - 1]
             echo("")
-            echo("cluster $showIdx: ${cluster.fileCount} files${hiddenNote(cluster)}, ${cluster.edges.size} strong pairs (pair-support volume ${cluster.pairSupportVolume})")
+            echo("cluster $showIdx: ${cluster.fileCount} files${hiddenNote(cluster)}, ${cluster.edges.size} strong pair${if (cluster.edges.size == 1) "" else "s"} (pair-support volume ${cluster.pairSupportVolume})")
             for (file in cluster.files) {
                 echo("  ${label(file)} (${context.changeCount(file)} changes, ${boundaries.moduleOf(file)})")
             }
@@ -318,7 +326,7 @@ class ClustersCommand : CliktCommand(
             val modules = cluster.files.map { boundaries.moduleOf(it) }.distinct()
             val span = if (modules.size == 1) "1 module (${modules.first()})" else "${modules.size} modules"
             echo("")
-            echo("cluster ${i + 1}: ${cluster.fileCount} files${hiddenNote(cluster)} across $span, ${cluster.edges.size} strong pairs (pair-support volume ${cluster.pairSupportVolume})")
+            echo("cluster ${i + 1}: ${cluster.fileCount} files${hiddenNote(cluster)} across $span, ${cluster.edges.size} strong pair${if (cluster.edges.size == 1) "" else "s"} (pair-support volume ${cluster.pairSupportVolume})")
             echo("  strongest pair: ${strongestOf(cluster)}")
         }
         echo("")
