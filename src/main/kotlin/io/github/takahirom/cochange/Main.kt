@@ -371,9 +371,26 @@ class CompareCommand : CliktCommand(
         val repo = File(path).canonicalFile
         val base = history.toAnalysisOptions()
         val baseSetup = Analysis.contextFor(repo, base.copy(since = windowSince(baseline)))
-        val recentSetup = Analysis.contextFor(repo, base.copy(since = windowSince(recent)))
+        // Both windows must be counted in the same unit. --change-unit auto resolves
+        // per window, so a repo that moved from merge commits to squashes would have
+        // its recent window counted at a finer granularity — and every rate would
+        // shift for that reason alone, with nothing in the output saying so. Pin the
+        // recent window to whatever the baseline resolved to.
+        val recentSetup = Analysis.contextFor(
+            repo,
+            base.copy(since = windowSince(recent), changeUnit = baseSetup.changeUnitName),
+        )
         val baseCtx = baseSetup.context
         val recentCtx = recentSetup.context
+
+        // What the recent window would have chosen on its own. A difference means the
+        // history's shape changed mid-window — worth stating, because it is the kind of
+        // change that moves rates without any file becoming more central.
+        val recentAlone = if (base.changeUnit == "auto") {
+            ChangeUnits.resolve("auto", repo, base.branch, windowSince(recent)).strategy.name
+        } else {
+            baseSetup.changeUnitName
+        }
 
         val computed = Compare.of(baseCtx, recentCtx, minCount)
         val moves = computed.moves
@@ -391,14 +408,27 @@ class CompareCommand : CliktCommand(
                 minCount = minCount, category = category,
                 baseline = baseWindow, recent = recentWindow,
                 comparison = computed.copy(moves = moves),
+                changeUnit = baseSetup.changeUnitName,
+                changeUnitReason = baseSetup.changeUnitReason,
+                recentWindowAloneWouldUse = recentAlone,
             ))
             return
         }
 
         if (baseSetup.shallow) echo("WARNING: shallow clone — windows are truncated, so the comparison is biased.", err = true)
+        if (recentAlone != baseSetup.changeUnitName) {
+            echo(
+                "WARNING: the recent window alone would be counted as \"$recentAlone\", not " +
+                    "\"${baseSetup.changeUnitName}\" — the history's shape changed. Both windows are counted as " +
+                    "\"${baseSetup.changeUnitName}\" so the rates stay comparable, but the recent window's units are " +
+                    "a worse fit for it than the baseline's.",
+                err = true,
+            )
+        }
         echo("baseline: $baseline (${baseWindow.multiFileChanges} multi-file of ${baseWindow.logicalChanges} units)   " +
             "recent: $recent (${recentWindow.multiFileChanges} multi-file of ${recentWindow.logicalChanges} units)" +
             if (category != null) "   category: $category" else "")
+        echo("change unit: ${baseSetup.changeUnitName} (${baseSetup.changeUnitReason}), applied to both windows")
         if (moves.isEmpty()) {
             echo("No files reached --min-count ($minCount) in either window. Widen the windows or lower --min-count.")
             return
