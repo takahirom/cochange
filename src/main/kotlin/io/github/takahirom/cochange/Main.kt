@@ -11,6 +11,8 @@ import com.github.ajalt.clikt.parameters.options.flag
 import com.github.ajalt.clikt.parameters.options.multiple
 import com.github.ajalt.clikt.parameters.options.option
 import com.github.ajalt.clikt.parameters.options.required
+import com.github.ajalt.clikt.parameters.options.split
+import com.github.ajalt.clikt.parameters.types.choice
 import com.github.ajalt.clikt.parameters.types.double
 import com.github.ajalt.clikt.parameters.types.int
 import com.github.ajalt.clikt.parameters.options.versionOption
@@ -39,12 +41,19 @@ class HistoryOptions : OptionGroup(name = "History options") {
     val groupWindowMin by option("--group-window", help = "Minutes within which same-author commits form one logical change (author-window mode)").long().restrictTo(1L..10_000L).default(30)
     val exclude by option("--exclude", help = "Glob to exclude (repeatable, adds to defaults)").multiple()
     val moduleRoot by option("--module-root", help = "Glob marking extra module-root directories (repeatable), e.g. 'ios/Targets/*' for build systems without per-module build files").multiple()
+    val excludeRole by option("--exclude-role", help = "Drop files by role before analysis: ${FileRole.EXCLUDABLE.joinToString(", ")} (comma-separated)").split(",")
+    val focus by option("--focus", help = "Shortcut: 'production-source' excludes test, resource, lockfile, and generated files").choice("production-source")
 
     fun toAnalysisOptions() = AnalysisOptions(
         branch = branch, since = since, changeUnit = changeUnit,
         maxFilesPerCommit = maxFiles, groupWindowMin = groupWindowMin, extraExcludes = exclude,
-        moduleRoots = moduleRoot,
+        moduleRoots = moduleRoot, excludeRoles = resolveExcludeRoles(),
     )
+
+    private fun resolveExcludeRoles(): List<String> = buildSet {
+        excludeRole?.forEach { add(FileRole.validateExcludable(it.trim())) }
+        if (focus == "production-source") addAll(FileRole.EXCLUDABLE)
+    }.toList()
 }
 
 class Analyze : CliktCommand(

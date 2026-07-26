@@ -47,6 +47,13 @@ cochange inspect finding-1 . --analysis long-term
 
 Re-computing commands can reuse a snapshot's exact conditions too — `cochange metrics . --analysis long-term` (also `pairs`, `clusters`) analyzes the same window, excludes, and change-unit as that snapshot instead of silently defaulting to all-history.
 
+**Excluding noise by role.** Tests, resources (`strings.xml`, `.pbxproj`), lockfiles, and generated files co-change with production code by nature. Drop them by role instead of writing globs — and note tests count as `source`, so `--category` can't remove them:
+
+```bash
+cochange analyze . --exclude-role test,resource,lockfile,generated
+cochange analyze . --focus production-source   # shortcut for all four
+```
+
 History-reading options (`--since`, `--branch`, `--change-unit`, …) apply **per command** — each one re-reads the Git log — so pass the same `--since` to every command to compare like with like. With no `--since` the whole history is used, and the run says so in its banner.
 
 **AI agents:** start with `cochange guide` — the playbooks (`explore`, `align-boundaries`, `reduce-change-tax`, `split-god-class`, `extract-module`, plus `reading` for how to weigh a finding) are written so an agent can operate the tool end to end without reading this README.
