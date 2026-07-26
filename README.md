@@ -30,6 +30,7 @@ cochange pairs /path/to/repo --category source         # raw co-change pairs, st
 cochange clusters /path/to/repo --category source      # de-facto change units (grouped pairs)
 cochange detectors                                     # what this tool can find
 cochange metrics /path/to/repo --json                  # repo-level scores (higher = better), for trending over time
+cochange compare /path/to/repo --baseline 180d --recent 30d  # what's heating up vs cooling down
 cochange guide                                         # playbooks: which commands, in what order, and how to read the results
 ```
 
@@ -134,6 +135,25 @@ reading: 13.1 effective modules x 29% adjusted locality — rich structure, freq
 ```
 
 `adjusted for chance` is the key number: reading it together with `effective modules` separates "few modules, easy to comply with" from "many modules, actually respected", so the score can't be gamed by a coarser partition.
+
+`compare` puts a recent window next to a baseline, so a file that was central historically but quiet lately doesn't get ranked next to one that is getting worse right now:
+
+```text
+$ cochange compare conference-app-2025 --baseline 2025-06-01 --recent 2025-08-20 --category source
+baseline: 2025-06-01 (381 units)   recent: 2025-08-20 (222 units)   category: source
+
+heating up — larger share of changes recently:
+  .../profile/ProfileCardScreen.kt                 2% ->  4%   (baseline 5, recent 5)
+  .../droidkaigiui/session/TimetableItemCard.kt    5% ->  6%   (baseline 11, recent 8)
+
+cooling down — was more central, quieter lately:
+  .../sessions/TimetableScreen.kt                  7% ->  4%   (baseline 18, recent 5)
+  .../Feature/Home/HomeScreen.swift                4% ->  2%   (baseline 10, recent 2)
+```
+
+Each rate is the file's share of that window's multi-file changes. `--baseline`/`--recent` take `30d`-style shorthand or any git `--since` expression (including absolute dates).
+
+For a weekly cadence, `compare --json` (and `metrics --json`) give machine-readable output. `compare --json` includes a summary — `heating`, `cooling`, and `totalAbsShift` (the summed change in participation share) — plus every mover, so you can track a single "how much moved this week" number over time.
 
 ## How it works
 

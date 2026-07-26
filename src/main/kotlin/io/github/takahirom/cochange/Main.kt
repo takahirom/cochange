@@ -10,6 +10,7 @@ import com.github.ajalt.clikt.parameters.options.default
 import com.github.ajalt.clikt.parameters.options.flag
 import com.github.ajalt.clikt.parameters.options.multiple
 import com.github.ajalt.clikt.parameters.options.option
+import com.github.ajalt.clikt.parameters.options.required
 import com.github.ajalt.clikt.parameters.types.double
 import com.github.ajalt.clikt.parameters.types.int
 import com.github.ajalt.clikt.parameters.options.versionOption
@@ -291,6 +292,72 @@ class MetricsCommand : CliktCommand(
     private fun fmt(v: Double?) = if (v == null) "  N/A" else "%5.1f%%".format(v * 100)
 }
 
+class CompareCommand : CliktCommand(
+    name = "compare",
+    help = "Compare co-change participation between a baseline and a recent window — what's heating up vs cooling down.",
+) {
+    private val path by argument(help = "Path to the Git repository").default(".")
+    private val history by HistoryOptions()
+    private val baseline by option("--baseline", help = "Baseline window, e.g. '180d' or '6 months ago'").required()
+    private val recent by option("--recent", help = "Recent window, e.g. '30d' or '1 month ago'").required()
+    private val minCount by option("--min-count", help = "Minimum participation in either window to be listed").int().restrictTo(min = 1).default(3)
+    private val top by option("--top", help = "Number of movers to show per direction").int().restrictTo(min = 1).default(10)
+    private val category by option("--category", help = "Only files in this category (source, config, build, docs, generated)")
+    private val asJson by option("--json", help = "Machine-readable output for weekly tracking").flag()
+
+    override fun run() {
+        val repo = File(path).canonicalFile
+        val base = history.toAnalysisOptions()
+        val baseSetup = Analysis.contextFor(repo, base.copy(since = windowSince(baseline)))
+        val recentSetup = Analysis.contextFor(repo, base.copy(since = windowSince(recent)))
+        val baseCtx = baseSetup.context
+        val recentCtx = recentSetup.context
+
+        val moves = Compare.of(baseCtx, recentCtx, minCount)
+            .filter { category == null || recentCtx.categoryOf(it.file) == category || baseCtx.categoryOf(it.file) == category }
+
+        if (asJson) {
+            echo(Compare.encode(
+                repo = repo.path, branch = history.branch ?: "HEAD", baseline = baseline, recent = recent,
+                baselineUnits = baseCtx.changes.size, recentUnits = recentCtx.changes.size, category = category, moves = moves,
+            ))
+            return
+        }
+
+        if (baseSetup.shallow) echo("WARNING: shallow clone — windows are truncated, so the comparison is biased.", err = true)
+        echo("baseline: $baseline (${baseCtx.changes.size} units)   recent: $recent (${recentCtx.changes.size} units)" +
+            if (category != null) "   category: $category" else "")
+        if (moves.isEmpty()) {
+            echo("No files reached --min-count ($minCount) in either window. Widen the windows or lower --min-count.")
+            return
+        }
+        val summary = Compare.summarize(moves)
+        echo("summary: ${summary.heating} heating, ${summary.cooling} cooling, total participation shift ${"%.0f".format(summary.totalAbsShift * 100)}%")
+
+        fun pct(v: Double) = "%3.0f%%".format(v * 100)
+        fun line(m: Compare.Move) = "  " + m.file.padEnd(52) +
+            " ${pct(m.baselineRate)} -> ${pct(m.recentRate)}   (baseline ${m.baselineCount}, recent ${m.recentCount})"
+
+        val heating = moves.filter { it.delta > 0 }.sortedByDescending { it.delta }.take(top)
+        val cooling = moves.filter { it.delta < 0 }.sortedBy { it.delta }.take(top)
+
+        echo("")
+        echo("heating up — larger share of changes recently:")
+        if (heating.isEmpty()) echo("  (none)") else heating.forEach { echo(line(it)) }
+        echo("")
+        echo("cooling down — was more central, quieter lately:")
+        if (cooling.isEmpty()) echo("  (none)") else cooling.forEach { echo(line(it)) }
+        echo("")
+        echo("Rates are each file's share of that window's multi-file changes. Overlapping windows are fine — the point is the shift in share, not absolute counts.")
+    }
+
+    /** Accept both `30d` shorthand and raw git --since expressions. */
+    private fun windowSince(value: String): String {
+        val days = Regex("^(\\d+)d$").find(value.trim())
+        return if (days != null) "${days.groupValues[1]} days ago" else value
+    }
+}
+
 class Detectors : CliktCommand(
     name = "detectors",
     help = "List what this tool can find.",
@@ -389,7 +456,7 @@ private fun printFindingsSummary(result: AnalysisResult, echo: (String) -> Unit)
 fun main(args: Array<String>) {
     try {
         Cochange()
-            .subcommands(Analyze(), Findings(), Inspect(), Pairs(), ClustersCommand(), MetricsCommand(), Detectors(), GuideCommand())
+            .subcommands(Analyze(), Findings(), Inspect(), Pairs(), ClustersCommand(), MetricsCommand(), CompareCommand(), Detectors(), GuideCommand())
             .main(args)
     } catch (e: IllegalStateException) {
         // Expected operational failures (git errors, empty repos) — no stack trace.
