@@ -45,9 +45,31 @@ class SplitCandidateDetector(
                 list.take(if (category == FileCategory.SOURCE) maxFindings else maxOtherCategoryFindings)
             }
 
+        // Full commit-time span over which the candidate co-changes with a group,
+        // so a reader can tell separate responsibilities from old/new eras.
+        fun activeSpan(file: String, component: List<String>): Pair<Long, Long>? {
+            val times = context.changes.asSequence()
+                .filter { file in it.files && component.any { m -> m in it.files } }
+                .flatMap { it.commits.asSequence().map { c -> c.epochSec } }
+                .toList()
+            return if (times.isEmpty()) null else times.min() to times.max()
+        }
+        fun day(epochSec: Long): String =
+            java.time.Instant.ofEpochSecond(epochSec).atZone(java.time.ZoneOffset.UTC).toLocalDate().toString()
+
         return candidates.map { c ->
             val file = c.file
             val name = file.substringAfterLast('/')
+            val links = adjacency[file].orEmpty()
+            val structuredGroups = c.components.map { component ->
+                val span = activeSpan(file, component)
+                SplitGroup(
+                    files = component,
+                    support = component.sumOf { links[it] ?: 0 },
+                    activeFrom = span?.let { day(it.first) } ?: "",
+                    activeTo = span?.let { day(it.second) } ?: "",
+                )
+            }
             val groups = c.components.mapIndexed { i, component ->
                 val names = component.take(5).joinToString(", ") { it.substringAfterLast('/') }
                 val more = if (component.size > 5) " … and ${component.size - 5} more" else ""
@@ -76,6 +98,7 @@ class SplitCandidateDetector(
                         "partners" to c.components.sumOf { it.size }.toString(),
                         "partnerSupport" to c.partnerSupport.toString(),
                     ),
+                    groups = structuredGroups,
                 ),
             )
         }

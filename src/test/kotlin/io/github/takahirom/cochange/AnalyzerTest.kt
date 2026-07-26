@@ -232,6 +232,28 @@ class CouplingKindTest {
     }
 }
 
+class SplitCandidateGroupsTest {
+    private var t = 0L
+    private fun commit(vararg files: String): Commit { t += 3600 * 24; return Commit("h$t", "a", t, "m", files.toList()) }
+
+    @Test
+    fun `split_candidate exposes full groups with support and active period`() {
+        val head = setOf("Hub.kt", "A1.kt", "A2.kt", "B1.kt", "B2.kt")
+        val changes = buildList {
+            repeat(6) { add(LogicalChange(listOf(commit("Hub.kt", "A1.kt", "A2.kt")))) }
+            repeat(6) { add(LogicalChange(listOf(commit("Hub.kt", "B1.kt", "B2.kt")))) }
+        }
+        val finding = Analyzer(minSupport = 5, minConfidence = 0.6)
+            .analyze(changes, Boundaries(head), head)
+            .single { it.type == "split_candidate" }
+        val groups = finding.detail.groups
+        assertEquals(2, groups.size)
+        assertTrue(groups.all { it.files.size == 2 }, "each group has its full file list")
+        assertTrue(groups.all { it.support > 0 })
+        assertTrue(groups.all { it.activeFrom.isNotEmpty() && it.activeTo.isNotEmpty() })
+    }
+}
+
 class DistinguishingLabelsTest {
     @Test
     fun `different basenames use the basename`() {

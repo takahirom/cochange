@@ -119,6 +119,22 @@ data class FindingDetail(
     val counterSignals: List<String>,
     val supportingChanges: List<String>,
     val metrics: Map<String, String> = emptyMap(),
+    /** For split_candidate: the independent partner clusters, in full, with their support and active period. */
+    val groups: List<SplitGroup> = emptyList(),
+)
+
+/**
+ * One independent partner cluster of a split_candidate: the full file list (no
+ * truncation), how strongly it co-changes with the candidate, and the span of
+ * dates over which that coupling was active — so a reader can tell "two
+ * responsibilities" apart from "old vs new era of one responsibility".
+ */
+@Serializable
+data class SplitGroup(
+    val files: List<String>,
+    val support: Int,
+    val activeFrom: String,
+    val activeTo: String,
 )
 
 @Serializable
