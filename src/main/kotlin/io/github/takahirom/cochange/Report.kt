@@ -102,6 +102,51 @@ data class ClusterEdgeReport(
     val tier: String = EvidenceTier.EVIDENCE,
 )
 
+/**
+ * One supporting change, readable without shelling out to git: what it was and
+ * how much of it landed in the files this finding is about. Churn is empty for a
+ * merge commit, which has no numstat of its own.
+ */
+@Serializable
+data class CommitSummary(
+    val hash: String,
+    val date: String,
+    val author: String,
+    val subject: String,
+    /** Lines added + deleted, per file, restricted to the finding's files. */
+    val churn: Map<String, Int> = emptyMap(),
+    val tier: String = EvidenceTier.EVIDENCE,
+)
+
+/**
+ * `inspect` output: the finding plus the run it came from. A bare finding gave a
+ * consumer no way to tell which window produced it, whether the clone was
+ * shallow, or whether the module names in its summary were real module roots.
+ */
+@Serializable
+data class InspectReport(
+    val schemaVersion: Int = SCHEMA_VERSION,
+    val analysis: String,
+    val repo: String,
+    val branch: String,
+    val headCommit: String,
+    val shallow: Boolean,
+    val changeUnit: String,
+    val analyzedCommits: Int,
+    val logicalChanges: Int,
+    val requestedOptions: AnalysisOptions? = null,
+    val options: AnalysisOptions? = null,
+    val moduleDetection: ModuleDetectionReport? = null,
+    val skippedDetectors: List<SkippedDetector> = emptyList(),
+    val hiddenByRole: Map<String, Int> = emptyMap(),
+    /** True when HEAD has moved since the snapshot was taken. */
+    val stale: Boolean = false,
+    val finding: Finding,
+    /** [Finding.detail]'s supportingChanges hashes resolved against the repository, when it is reachable. */
+    val supportingCommits: List<CommitSummary> = emptyList(),
+    val tiers: Map<String, String> = RunContext.TIER_MEANINGS,
+)
+
 @Serializable
 data class ClustersReport(
     val context: RunContext,
