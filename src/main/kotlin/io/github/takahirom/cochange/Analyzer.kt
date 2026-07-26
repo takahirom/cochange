@@ -15,6 +15,8 @@ class AnalysisRun(
     val findings: List<Finding>,
     val skipped: List<SkippedDetector>,
     val moduleDetection: ModuleDetectionReport,
+    /** Analyzed files hidden from the findings by `--exclude-role`, per role. */
+    val hiddenByRole: Map<String, Int>,
 )
 
 class Analyzer(
@@ -36,6 +38,7 @@ class Analyzer(
             findings = findings,
             skipped = blocked.map { SkippedDetector(it.type, modules.note) },
             moduleDetection = modules,
+            hiddenByRole = context.hiddenByRole,
         )
     }
 
@@ -125,7 +128,7 @@ class BoundaryMismatchDetector(
     override fun detect(context: AnalysisContext): List<Finding> {
         val boundaries = context.boundaries
         val candidates = context.pairs(minTogether = minSupport)
-            .filter { it.a in context.headFiles && it.b in context.headFiles }
+            .filter { context.isVisible(it.a) && context.isVisible(it.b) }
             .filter { boundaries.moduleOf(it.a) != boundaries.moduleOf(it.b) }
             .filter { it.confidence >= minConfidence }
             // Rank by architectural interest, not raw strength: a surprising
@@ -243,7 +246,7 @@ class UnstableHubDetector(
 
         return participation.asSequence()
             .filter { (file, count) ->
-                file in context.headFiles && count >= minParticipation &&
+                context.isVisible(file) && count >= minParticipation &&
                     (partnerModules[file]?.size ?: 0) >= minModuleSpread
             }
             .sortedByDescending { (file, count) -> count.toLong() * partnerModules[file]!!.size }

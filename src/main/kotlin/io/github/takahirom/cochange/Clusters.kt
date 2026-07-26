@@ -21,7 +21,7 @@ object Clusters {
         fileFilter: (String) -> Boolean = { true },
     ): List<Cluster> {
         val edges = context.pairs(minTogether = minSupport)
-            .filter { it.a in context.headFiles && it.b in context.headFiles }
+            .filter { context.isVisible(it.a) && context.isVisible(it.b) }
             .filter { fileFilter(it.a) && fileFilter(it.b) }
             .map { Edge(it.a, it.b, it.together, it.jaccard) }
             .filter { it.jaccard >= minConfidence }

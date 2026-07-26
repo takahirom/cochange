@@ -33,7 +33,27 @@ class AnalysisContext(
     val headFiles: Set<String>,
     /** Files declared `linguist-generated` in `.gitattributes`; classified as generated on top of the name heuristics. */
     val generated: Set<String> = emptySet(),
+    /**
+     * Roles the user asked to exclude (see [FileRole]). Applied when *presenting*
+     * results, never when counting them: the pair counts below always reflect the
+     * full history, so hiding tests can't change what the remaining numbers mean.
+     */
+    val excludedRoles: Set<String> = emptySet(),
 ) {
+    /** True when [path]'s role was excluded, so it should not be shown or reported on. */
+    fun isHidden(path: String): Boolean =
+        excludedRoles.isNotEmpty() && FileRole.of(path) in excludedRoles
+
+    /** A file worth showing: still present at HEAD, and not hidden by an excluded role. */
+    fun isVisible(path: String): Boolean = path in headFiles && !isHidden(path)
+
+    /** How many analyzed files each excluded role is hiding, for the "and here's what you're not seeing" line. */
+    val hiddenByRole: Map<String, Int> by lazy {
+        if (excludedRoles.isEmpty()) emptyMap() else analyzedFiles
+            .groupingBy { FileRole.of(it) }.eachCount()
+            .filterKeys { it in excludedRoles }
+    }
+
     /** Category of one file, treating repo-declared generated files as [FileCategory.GENERATED]. */
     fun categoryOf(path: String): String =
         if (path in generated) FileCategory.GENERATED else FileCategory.of(path)

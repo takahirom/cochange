@@ -18,7 +18,7 @@ data class AnalysisOptions(
     val groupWindowMin: Long = 30,
     val extraExcludes: List<String> = emptyList(),
     val moduleRoots: List<String> = emptyList(),
-    /** File roles to drop before analysis (test/resource/lockfile/generated); see [FileRole]. */
+    /** File roles to hide from the output (test/resource/lockfile/generated); see [FileRole]. Never removed from the counts. */
     val excludeRoles: List<String> = emptyList(),
 )
 
@@ -93,20 +93,23 @@ object Analysis {
             else -> resolved.strategy
         }
         val excludes = DEFAULT_EXCLUDES + options.extraExcludes
-        val rawChanges = strategy.changeUnits(repo, options.branch, options.since, excludes)
-        // Role-based exclusion: strip files whose role the user dropped, then discard
-        // change units left with nothing. Kept out of the glob path because roles
-        // (esp. tests) don't reduce to a fixed glob.
-        val roles = options.excludeRoles.toSet()
-        val changes = if (roles.isEmpty()) rawChanges else rawChanges
-            .map { change -> change.copy(commits = change.commits.map { c -> c.copy(files = c.files.filterNot { FileRole.of(it) in roles }) }) }
-            .filter { it.files.isNotEmpty() }
+        val changes = strategy.changeUnits(repo, options.branch, options.since, excludes)
         val headFiles = GitLog.headFiles(repo, options.branch)
         val generated = GitLog.generatedFiles(repo, rev, headFiles)
         return AnalysisSetup(
             repo = repo,
             options = options,
-            context = AnalysisContext(changes, Boundaries(headFiles, options.moduleRoots), headFiles, generated),
+            context = AnalysisContext(
+                changes,
+                Boundaries(headFiles, options.moduleRoots),
+                headFiles,
+                generated,
+                // Roles hide files from the *views* — findings, listed pairs, clusters.
+                // The co-change counts underneath still include them, so a later run
+                // with a different --exclude-role reads the same history, and no
+                // number ever silently rests on evidence that was thrown away.
+                excludedRoles = options.excludeRoles.toSet(),
+            ),
             changeUnitName = strategy.name,
             changeUnitReason = resolved.reason,
             shallow = GitLog.isShallow(repo),

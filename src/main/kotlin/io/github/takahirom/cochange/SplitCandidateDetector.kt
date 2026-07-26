@@ -21,7 +21,7 @@ class SplitCandidateDetector(
         // Co-change adjacency over all files, at the weaker partner-partner strength.
         val adjacency = HashMap<String, MutableMap<String, Int>>()
         for (p in context.pairs(minTogether = minPartnerLink)) {
-            if (p.a !in context.headFiles || p.b !in context.headFiles) continue
+            if (!context.isVisible(p.a) || !context.isVisible(p.b)) continue
             adjacency.getOrPut(p.a) { HashMap() }[p.b] = p.together
             adjacency.getOrPut(p.b) { HashMap() }[p.a] = p.together
         }
