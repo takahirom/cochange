@@ -82,7 +82,10 @@ object ModuleGate {
     const val GUESSED = "guessed"
 
     fun report(detection: ModuleDetection): ModuleDetectionReport {
-        val coverage = detection.coverage
+        // Round once, then use that everywhere. Formatting the raw value in the note while
+        // publishing the rounded one printed the same number as "83%" and "84%" in two
+        // lines of the same output, which reads as a bug.
+        val coverage = round2(detection.coverage)
         val fallback = detection.totalFiles - detection.declaredFiles
         val hint = "pass --module-root '<glob>' to declare the boundaries of this repository's layout"
         val hintSentence = hint.replaceFirstChar { it.uppercase() } + "."

@@ -91,8 +91,10 @@ Analyzed 381 commits as 381 change units (unit: merge) in 0.5s
 # what the findings below rest on — here, real module roots, so nothing is withheld
 module detection [derived]: nearest directory with a build file, SwiftPM
   Sources/Tests target directory, repository root (build file at top level)
-  coverage: 100% of 850 files under a declared module root (34 modules,
-    34 declared, trust=declared)
+  coverage: 100% of 850 files under a declared module root (36 modules,
+    36 declared, trust=declared)
+  100% of files resolve to a module root the repository itself declares,
+    across 36 declared modules.
 
 Review candidates (12) — heuristic interpretations of the co-change evidence
 
@@ -108,7 +110,7 @@ finding-1 [boundary_mismatch/source] impact=medium effort=medium confidence=1.0
 # one file everything drags in
 finding-7 [unstable_hub/source] impact=high confidence=0.08
   KaigiAppUi.androidJvm.kt participated in 8% of multi-file changes,
-  spanning 20 other modules
+  spanning 21 other modules
 
 # one file doing two unrelated jobs — with the split lines
 finding-8 [split_candidate/source] impact=medium confidence=0.9
@@ -127,8 +129,12 @@ change unit: merge (auto: merge-based history (87% of mainline commits are merge
   ~3.9 commits per merge))
 
 module detection [derived]: Go package directory, repository root (build file at top level)
-  coverage: 100% of 899 files under a declared module root (256 modules,
-    256 declared, trust=declared)
+  coverage: 84% of 899 files under a declared module root (257 modules,
+    255 declared, trust=partial)
+  84% of files sit under a declared module root (255 declared modules); 144 fell
+    back to a top-level directory name. Findings are reported only for files on both
+    sides of a declared boundary — a pair resting on a guessed folder is withheld
+    individually, not counted here.
 
 Review candidates (36) — heuristic interpretations of the co-change evidence
 
@@ -150,22 +156,24 @@ collapsed 1 synchronized sibling family (e.g. strings.xml across 2) — use --no
 
 cluster 1: 7 files across 1 module (feature/sessions), 12 strong pairs (pair-support volume 69)
   strongest pair: TimetableItemDetailScreen.kt x TimetableItemDetailFloatingMenu.kt (7 together, jaccard 0.39)
+
 cluster 2: 4 files across 1 module (app-shared), 6 strong pairs (pair-support volume 36)
   strongest pair: AboutNavExtension.kt x AboutNavGraph.kt (6 together, jaccard 0.86)
-...
-cluster 4: 4 files across 3 modules, 6 strong pairs (pair-support volume 30)
-  strongest pair: AndroidAppGraph.kt x JvmAppGraph.kt (5 together, jaccard 1.00)
 
-Next: cochange clusters conference-app-2025 --show 1 --min-support 5 --min-jaccard 0.25 --category source
+cluster 3: 4 files across 3 modules, 6 strong pairs (pair-support volume 30)
+  strongest pair: AndroidAppGraph.kt x JvmAppGraph.kt (5 together, jaccard 1.00)
+...
+
+Next: cochange clusters conference-app-2025 --show 1 --min-support 5 --min-jaccard 0.25 --category source — full file list for a cluster (keep these options to address the same one)
 ```
 
 Note the `collapsed 1 synchronized sibling family` line: `strings.xml` across two locale directories always moves as a set, so it counts as one node instead of topping the list as its own "coupling". That's learned from this repository's history — no locale or ecosystem list is built in.
 
-Each headline recommends the exact command to expand it. `--show N` opens one cluster — here cluster 4, the Kotlin Multiplatform entry points spread across three modules but always changed in lockstep:
+Each headline recommends the exact command to expand it, carrying every option that changed the clustering so the follow-up reproduces what you just read. `--show N` opens one cluster — here cluster 3, the Kotlin Multiplatform entry points spread across three modules but always changed in lockstep:
 
 ```text
-$ cochange clusters conference-app-2025 --min-support 5 --category source --show 4
-cluster 4: 4 files, 6 strong pairs (pair-support volume 30)
+$ cochange clusters conference-app-2025 --min-support 5 --category source --show 3
+cluster 3: 4 files, 6 strong pairs (pair-support volume 30)
   app-shared/src/androidMain/.../AndroidAppGraph.kt (5 changes, app-shared)
   app-shared/src/jvmMain/.../JvmAppGraph.kt (5 changes, app-shared)
   app-android/.../App.kt (6 changes, app-android)
@@ -173,7 +181,7 @@ cluster 4: 4 files, 6 strong pairs (pair-support volume 30)
   strongest pair: AndroidAppGraph.kt x JvmAppGraph.kt (5 together, jaccard 1.00)
 ```
 
-Each cluster is a co-change neighbourhood the module structure doesn't show: the session-detail screen and its floating menu (cluster 1), and the KMP entry points above (cluster 4). Whether the whole cluster ever moved as one change is a separate question — check `pairs` for the links that actually carry it.
+Each cluster is a co-change neighbourhood the module structure doesn't show: the session-detail screen and its floating menu (cluster 1), and the KMP entry points above (cluster 3). Whether the whole cluster ever moved as one change is a separate question — check `pairs` for the links that actually carry it.
 
 Synchronized sibling files (e.g. `values/strings.xml` + `values-ja/strings.xml` + … — same basename, sibling directories, one module, that history shows always move together) are collapsed into a single node so a translation or variant set can't dominate a cluster or manufacture a hub. The family is learned from the repo, not from a locale/ecosystem list, and only collapsed when the co-change actually confirms it. Raw pairs are untouched; `--no-collapse` expands them.
 
@@ -183,17 +191,19 @@ Synchronized sibling files (e.g. `values/strings.xml` + `values-ja/strings.xml` 
 
 ```text
 $ cochange metrics conference-app-2025
-window: 0.3 years  multi-file change units: 244  effective modules: 13.1 (34 distinct)
+window: 0.3 years  multi-file change units: 244 (244 within declared modules)
+  effective modules: 13.2 (36 distinct)
 
-module locality         30.3%  (74/244 multi-file units contained in one module)
-  adjusted for chance   28.9%  (contribution of the module structure beyond random placement — a monolith scores ~0 here)
+module locality         29.9%  (73/244 declared-module units contained in one module)
+  adjusted for chance   28.5%  (contribution of the module structure beyond random
+    placement; N/A when one module makes the question meaningless)
 hub-free change rate    82.4%  (201/244 units avoid the 2 hub files)
                          hub: gradle/libs.versions.toml
                          hub: .../KaigiAppUi.androidJvm.kt
-boundary integrity      84.1%  (143/170 cross-module units avoid the 9 recurring hotspot pairs)
+boundary integrity      84.2%  (144/171 cross-module units avoid the 9 recurring hotspot pairs)
                          top hotspot: build.gradle.kts x libs.versions.toml — ~35.7 double-edits/year
 
-reading: 13.1 effective modules x 29% adjusted locality — rich structure, frequently
+reading: 13.2 effective modules x 29% adjusted locality — rich structure, frequently
   violated — the lever is aligning boundaries (cochange guide align-boundaries) and
   taming hubs (guide reduce-change-tax)
 ```
@@ -205,7 +215,9 @@ reading: 13.1 effective modules x 29% adjusted locality — rich structure, freq
 ```text
 $ cochange compare conference-app-2025 --baseline 2025-06-01 --recent 2025-08-20 --category source
 baseline: 2025-06-01 (244 multi-file of 381 units)   recent: 2025-08-20 (128 multi-file of 220 units)   category: source
-summary: 69 heating, 145 cooling, mean shift 0.9pp per listed file (214 files at --min-count 3)
+change unit: merge (auto: merge-based history (94% of mainline commits are merges,
+  ~4.8 commits per merge)), applied to both windows
+summary: 69 heating, 144 cooling, mean shift 0.9pp per mover (over 213 movers at --min-count 3)
 
 heating up — larger share of changes recently:
   .../profile/ProfileCardScreen.kt                 2% ->  4%   (baseline 5, recent 5)
