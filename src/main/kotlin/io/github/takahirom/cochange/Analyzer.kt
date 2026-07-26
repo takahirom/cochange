@@ -6,15 +6,40 @@ fun defaultDetectors(minSupport: Int = 5, minConfidence: Double = 0.6): List<Fin
     SplitCandidateDetector(minSupport = minSupport),
 )
 
+/**
+ * One analysis pass: the findings that ran, plus the detectors that were
+ * deliberately withheld and why. Reporting the skips is part of the result —
+ * an absent finding type otherwise reads as "nothing to see here".
+ */
+class AnalysisRun(
+    val findings: List<Finding>,
+    val skipped: List<SkippedDetector>,
+    val moduleDetection: ModuleDetectionReport,
+)
+
 class Analyzer(
     private val detectors: List<FindingDetector>,
 ) {
     constructor(minSupport: Int = 5, minConfidence: Double = 0.6) : this(defaultDetectors(minSupport, minConfidence))
 
-    fun analyze(context: AnalysisContext): List<Finding> =
-        detectors.flatMap { it.detect(context) }
+    fun run(context: AnalysisContext): AnalysisRun {
+        val modules = ModuleGate.report(context.moduleDetection)
+        // The gate withholds, it does not merely warn: a finding whose whole
+        // claim is "these two files live in different modules" is worthless when
+        // "module" means "top-level folder name". Raw pairs, clusters and
+        // metrics are untouched — only this interpretation layer is gated.
+        val (allowed, blocked) = detectors.partition { modules.moduleFindingsEnabled || !it.requiresModuleBoundaries }
+        val findings = allowed.flatMap { it.detect(context) }
             .sortedBy { FileCategory.priority.indexOf(it.category) }
             .mapIndexed { i, f -> f.copy(id = "finding-${i + 1}") }
+        return AnalysisRun(
+            findings = findings,
+            skipped = blocked.map { SkippedDetector(it.type, modules.note) },
+            moduleDetection = modules,
+        )
+    }
+
+    fun analyze(context: AnalysisContext): List<Finding> = run(context).findings
 
     fun analyze(
         changes: List<LogicalChange>,
@@ -93,6 +118,7 @@ class BoundaryMismatchDetector(
     private val maxOtherCategoryFindings: Int = 5,
 ) : FindingDetector {
     override val type = "boundary_mismatch"
+    override val requiresModuleBoundaries = true
     override val description =
         "File pairs in different modules that keep changing together — the module boundary and the actual change boundary disagree."
 
@@ -194,6 +220,8 @@ class UnstableHubDetector(
     private val maxOtherCategoryFindings: Int = 5,
 ) : FindingDetector {
     override val type = "unstable_hub"
+    // Its threshold is "spans N *other modules*" — meaningless when modules are folder names.
+    override val requiresModuleBoundaries = true
     override val description =
         "Files dragged into a large share of multi-file changes across many modules — candidates for god modules, central wiring, or catch-all utilities."
 

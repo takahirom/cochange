@@ -78,7 +78,7 @@ class Analyze : CliktCommand(
             echo("")
         }
         val changes = setup.changes
-        val findings = Analyzer(minSupport, minConfidence).analyze(setup.context)
+        val run = Analyzer(minSupport, minConfidence).run(setup.context)
 
         val result = AnalysisResult(
             repo = repo.path,
@@ -88,8 +88,11 @@ class Analyze : CliktCommand(
             changeUnit = setup.changeUnitName,
             analyzedCommits = changes.sumOf { it.commits.size },
             logicalChanges = changes.size,
-            findings = findings,
-            options = history.toAnalysisOptions(),
+            findings = run.findings,
+            requestedOptions = history.toAnalysisOptions(),
+            options = setup.resolvedOptions,
+            moduleDetection = run.moduleDetection,
+            skippedDetectors = run.skipped,
         )
         Store.save(repo, result, save)
 
@@ -451,6 +454,13 @@ private fun printBanner(setup: AnalysisSetup, echo: (String, Boolean) -> Unit, c
     out("branch: ${setup.options.branch ?: "HEAD"}  since: ${since ?: "(all history)"}")
     if (since == null) {
         err("note: no --since — computing over all history; pass --since (e.g. '1 year ago') to match the window used elsewhere.")
+    } else {
+        val pinned = setup.resolvedOptions.since
+        if (pinned != null && Analysis.windowLooksUnparsed(pinned)) {
+            err("WARNING: git could not read --since '$since' as a date and treated it as 'now', so almost no history was analyzed. Use a form git understands, e.g. '1 year ago' or '2025-01-01'.")
+        } else if (pinned != null && pinned != since) {
+            out("  window pinned to: $pinned")
+        }
     }
     if (setup.shallow) err("WARNING: shallow clone — history is truncated, so every ratio below is biased. Run 'git fetch --unshallow' for accurate results.")
     out("change unit: ${setup.changeUnitName} (${setup.changeUnitReason})" +
@@ -458,14 +468,42 @@ private fun printBanner(setup: AnalysisSetup, echo: (String, Boolean) -> Unit, c
     if (!compact && setup.changeUnitName == "author-window") {
         out("  window: ${setup.options.groupWindowMin}m same-author, max ${setup.options.maxFilesPerCommit} files/commit")
     }
+    // pairs/clusters/metrics print module names too, and a fallback name looks
+    // exactly like a real module root — say so once, up front.
+    val modules = ModuleGate.report(setup.context.moduleDetection)
+    if (modules.trust != ModuleGate.DECLARED) {
+        err("note: module detection is ${modules.trust} (${pct(modules.coverage)} of files under a declared module root) — ${modules.note}")
+    }
+}
+
+/**
+ * Reports how the structure findings depend on was resolved, and whether any
+ * detector was withheld because it wasn't resolved well enough. Printed before
+ * the findings so the reader knows what they are trusting, and printed even
+ * when there are no findings — "nothing found" and "nothing was allowed to
+ * run" are different answers.
+ */
+private fun printTrustNotes(result: AnalysisResult, echo: (String) -> Unit) {
+    val modules = result.moduleDetection ?: return
+    echo("module detection [derived]: ${modules.methods.joinToString(", ").ifEmpty { "none — no build files or --module-root globs matched" }}")
+    echo("  coverage: ${pct(modules.coverage)} of ${modules.totalFiles} files under a declared module root " +
+        "(${modules.moduleCount} module${if (modules.moduleCount == 1) "" else "s"}, trust=${modules.trust})")
+    echo("  ${modules.note}")
+    for (s in result.skippedDetectors) {
+        echo("  WITHHELD ${s.type}: findings of this type were not produced — see above.")
+    }
+    echo("")
 }
 
 private fun printFindingsSummary(result: AnalysisResult, echo: (String) -> Unit) {
+    printTrustNotes(result, echo)
     if (result.findings.isEmpty()) {
         echo("No findings above thresholds. Try lowering --min-support / --min-confidence.")
         return
     }
-    echo("Architecture Findings (${result.findings.size})")
+    // "Review candidates", not "findings you should act on": every line below is
+    // an interpretation of the raw co-change evidence, not a verified defect.
+    echo("Review candidates (${result.findings.size}) — heuristic interpretations of the co-change evidence")
     for (f in result.findings) {
         echo("")
         echo("${f.id} [${f.type}/${f.category}] impact=${f.impact}${if (f.effort.isNotEmpty()) " effort=${f.effort}" else ""} confidence=${f.confidence}")

@@ -2,15 +2,27 @@
 
 **Code that changes together should live together.**
 
-cochange reads your Git history to find code that **changes together but lives apart** — the coupling your module structure hides — and turns it into evidence-backed findings for humans and AI. It looks at what actually changes together, not at static dependencies.
+cochange reads your Git history to find code that **changes together but lives apart** — the coupling your module structure hides — and turns it into evidence-backed **review candidates** for humans and AI. It looks at what actually changes together, not at static dependencies.
 
 ## What you get
 
-- **Where to start refactoring — ranked by ROI, not vibes.** Which files drag the most changes across module boundaries, with the commits that prove it, plus an effort estimate (an entrenched Kotlin↔Swift coupling costs more to fix than a generated-file one) so you sort by impact vs cost (`analyze`, `findings`).
-- **Module boundaries the code is asking for.** Files that always move together — ready-made "extract a module" proposals hiding in a monolith (`clusters`).
-- **Proof a migration finished.** A parallel old/new implementation shows up as one cluster — every fix still paid twice; when the cluster disappears, the migration is actually done.
+- **A shortlist of where to look first, with the cost of looking.** Which files drag the most changes across module boundaries, the commits that show it, and an effort estimate (an entrenched Kotlin↔Swift coupling costs more to fix than a generated-file one) so you can sort by impact vs cost (`analyze`, `findings`).
+- **Candidate module boundaries the history suggests.** Files that keep moving together — a starting point for "should this be one module?" (`clusters`).
+- **A way to check whether a migration actually finished.** A parallel old/new implementation shows up as one cluster — every fix still paid twice; when the cluster disappears, the duplication is gone.
 - **A structure score you can trend.** The whole history reduced to a few higher-is-better numbers, so you can tell if a refactor helped or just moved things around (`metrics`).
 - **A map for AI agents.** `--json` + `guide` hand a coding agent the change structure of an unfamiliar repo before it reads a line.
+
+### How much to trust each line
+
+cochange mixes three kinds of statement and labels them, because reading them as equally solid is the fastest way to act on a false positive:
+
+| Tier | What it is | How it can be wrong |
+| --- | --- | --- |
+| **evidence** | Counted from commits: which files appeared in the same change, how often (`pairs`, the numbers under every finding) | Only if the history was read wrong (shallow clone, wrong `--since`, wrong change unit) |
+| **derived** | Structure inferred from the repo: modules, categories, roles, clusters, change units | Best-effort per repository. Each carries its detection method and coverage |
+| **interpretation** | What a coupling might mean and what it might cost: findings, impact, effort | Heuristic. These are review candidates, not verified defects |
+
+When the derived layer is too weak to support an interpretation, cochange **withholds** the finding rather than footnoting it — e.g. if module detection resolved most files by directory name instead of by a build file, `boundary_mismatch` and `unstable_hub` are not produced, and the run says so. Raw evidence (`pairs`, `clusters`, `metrics`) is never withheld.
 
 ## Install
 
@@ -45,7 +57,9 @@ cochange findings . --analysis recent
 cochange inspect finding-1 . --analysis long-term
 ```
 
-Re-computing commands can reuse a snapshot's exact conditions too — `cochange metrics . --analysis long-term` (also `pairs`, `clusters`) analyzes the same window, excludes, and change-unit as that snapshot instead of silently defaulting to all-history.
+Re-computing commands can replay a snapshot's conditions too — `cochange metrics . --analysis long-term` (also `pairs`, `clusters`) analyzes the same window, excludes, and change-unit as that snapshot instead of silently defaulting to all-history.
+
+A snapshot stores its conditions **pinned**: the commit it ran on, `--since` as an absolute instant, and the change unit `auto` actually picked. So replaying it reads the same history rather than today's equivalent of "1 year ago". The JSON keeps both — `requestedOptions` (what you typed) and `options` (what it resolved to).
 
 **Excluding noise by role.** Tests, resources (`strings.xml`, `.pbxproj`), lockfiles, and generated files co-change with production code by nature. Drop them by role instead of writing globs — and note tests count as `source`, so `--category` can't remove them:
 

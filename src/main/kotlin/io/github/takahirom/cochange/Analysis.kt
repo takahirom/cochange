@@ -37,6 +37,21 @@ class AnalysisSetup(
     val headCommit: String,
 ) {
     val changes: List<LogicalChange> get() = context.changes
+
+    /**
+     * The options with every relative or auto-resolved value replaced by what it
+     * actually resolved to: the commit instead of the branch tip, an absolute
+     * instant instead of "1 year ago", the chosen change unit instead of "auto".
+     * Replaying these re-reads the same history; replaying the raw request does
+     * not, because the tip moves and "1 year ago" means something else tomorrow.
+     */
+    val resolvedOptions: AnalysisOptions by lazy {
+        options.copy(
+            branch = headCommit.ifEmpty { options.branch },
+            since = options.since?.let { GitLog.resolveSince(repo, it) ?: it },
+            changeUnit = changeUnitName,
+        )
+    }
 }
 
 /**
@@ -51,6 +66,17 @@ object Analysis {
         "**/*.png", "**/*.jpg", "**/*.webp", "**/*.svg",
         "**/*.jar", "**/*.bin", "**/*.pb",
     )
+
+    /**
+     * True when a resolved `--since` sits within a minute of now. git does not
+     * reject an unparseable date — it falls back to the current time — so
+     * `--since "las year"` quietly analyzes an empty history. Comparing the
+     * pinned instant against now is the only way to notice.
+     */
+    fun windowLooksUnparsed(resolvedSince: String): Boolean {
+        val instant = runCatching { java.time.Instant.parse(resolvedSince) }.getOrNull() ?: return false
+        return instant.isAfter(java.time.Instant.now().minusSeconds(60))
+    }
 
     fun contextFor(repo: File, options: AnalysisOptions): AnalysisSetup {
         check(GitLog.isRepository(repo)) { "$repo is not a git repository" }

@@ -101,6 +101,21 @@ object GitLog {
     fun headCommit(repo: File, branch: String?): String =
         runGit(repo, listOf("rev-parse", (branch ?: "HEAD"))).trim()
 
+    /**
+     * Turns a relative window like "1 year ago" into an absolute UTC instant,
+     * using git's own date parser (`git rev-parse --since=X` prints
+     * `--max-age=<epoch>`). Needed so a saved snapshot pins the window it
+     * actually analyzed: replaying "1 year ago" a month later reads a different
+     * history and silently produces a different answer.
+     */
+    fun resolveSince(repo: File, since: String): String? {
+        val epoch = runCatching {
+            runGit(repo, listOf("rev-parse", "--since=$since"))
+                .trim().substringAfter("--max-age=", "").trim().toLongOrNull()
+        }.getOrNull() ?: return null
+        return java.time.Instant.ofEpochSecond(epoch).toString()
+    }
+
     internal fun runGit(repo: File, args: List<String>, stdin: String? = null): String {
         // quotepath=off keeps non-ASCII paths literal instead of octal-escaped.
         val process = ProcessBuilder(listOf("git", "-c", "core.quotepath=off") + args)
