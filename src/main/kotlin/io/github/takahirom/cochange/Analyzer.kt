@@ -69,6 +69,23 @@ object CouplingKind {
      * family; unknown ones fall back to the raw extension so an unrecognized
      * language is never silently treated as "same" as a different one.
      */
+    /**
+     * A file's language family, or null when the path carries no language at all — no
+     * extension (`LICENSE`, `Makefile`) or a dotfile with no stem (`.gitignore`). Those
+     * used to fall through to the raw extension and be compared as if they were code, so
+     * `App.kt` x `.gitignore` came out as "jvm vs gitignore, expensive to break".
+     *
+     * An unmapped but real extension still returns a key (`php` -> "php"), so a genuine
+     * language boundary is not understated just because the table is thin.
+     */
+    fun langKeyOrNull(path: String): String? {
+        val name = path.substringAfterLast('/')
+        val stem = name.substringBeforeLast('.', "")
+        // "LICENSE" has no dot; ".gitignore" has one but nothing before it.
+        if ('.' !in name || stem.isEmpty()) return null
+        return langKey(path)
+    }
+
     private fun langKey(path: String): String {
         val ext = path.substringAfterLast('.', "").lowercase()
         return when (ext) {
@@ -185,6 +202,13 @@ object CouplingKind {
             // (Screen.kt / Screen.swift), which is the expensive coupling, not a cheap
             // companion. Unknown extensions compare by their raw extension, so an
             // unrecognized pair (Foo.kt / Foo.php) is not understated.
+            // Only when BOTH sides carry a language. A file with none is not a platform
+            // away from anything, and claiming otherwise sends a reader to deprioritize a
+            // coupling that is trivially cheap.
+            langKeyOrNull(a) == null || langKeyOrNull(b) == null -> Estimate(
+                "unclassified", "medium",
+                "one side has no language to compare (no extension, or a dotfile) — this is not a cross-platform coupling, but it is not obviously cheap either; read the two files before deciding.",
+            )
             langKey(a) != langKey(b) -> Estimate(
                 "cross-language", "high",
                 "both sides are code, in different languages (${langKey(a)} vs ${langKey(b)}) — a design coupling across a platform boundary is expensive to break; weigh it against the impact before committing.",

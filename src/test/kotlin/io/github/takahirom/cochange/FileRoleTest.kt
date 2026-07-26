@@ -72,3 +72,25 @@ class FileRoleBlindSpotsTest {
         assertTrue(context.isVisible("src/App.kt"))
     }
 }
+
+/**
+ * The stem suffixes are matched case-sensitively, which is what keeps ordinary words apart
+ * from test names: `Contest` ends in lowercase `test`, not `Test`. A reviewer flagged this
+ * as a false positive; it is not, and an attempt to "fix" it broke real test detection —
+ * hence this test, so the case-sensitivity is not softened by accident later.
+ */
+class TestSuffixCaseSensitivityTest {
+    @Test
+    fun `an ordinary word ending in lowercase test is not a test file`() {
+        for (name in listOf("Contest.kt", "Protest.kt", "Latest.kt", "Manifest.kt", "Greatest.kt")) {
+            assertEquals(FileRole.SOURCE, FileRole.of("app/$name"), name)
+        }
+    }
+
+    @Test
+    fun `real test names are recognised`() {
+        for (name in listOf("FooTest.kt", "FooTests.kt", "FooSpec.kt", "Test.kt", "foo_test.go", "test_foo.py")) {
+            assertEquals(FileRole.TEST, FileRole.of("app/$name"), name)
+        }
+    }
+}

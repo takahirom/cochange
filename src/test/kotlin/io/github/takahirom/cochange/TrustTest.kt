@@ -831,3 +831,52 @@ class BuildFileCatalogueTest {
         }
     }
 }
+
+/**
+ * A file with no language is not a platform away from anything. `langKey` used to fall
+ * back to the raw extension, so `App.kt` x `.gitignore` came out as
+ * "jvm vs gitignore — expensive to break, effort=high" — which would send a reader to
+ * deprioritize a coupling that costs nothing to fix.
+ */
+class UnclassifiedLanguageTest {
+    @Test
+    fun `a file with no extension is not a language boundary`() {
+        // None of these may be called an expensive cross-platform coupling. Makefile and
+        // Dockerfile are build definitions, so the manifest rule claims them first and
+        // costs them low — which is the better answer. LICENSE has no category of its own
+        // and lands on `unclassified`.
+        for (other in listOf("LICENSE", "Makefile", "tools/Dockerfile")) {
+            val e = CouplingKind.of("app/src/App.kt", other, FileCategory.ofPair("app/src/App.kt", other), namesRelated = false)
+            assertTrue(e.kind != "cross-language", "$other has no language: got ${e.kind}/${e.effort}")
+            assertTrue(e.effort != "high", "$other must not be costed as an expensive platform coupling: ${e.effort}")
+        }
+        val license = CouplingKind.of("app/src/App.kt", "LICENSE", FileCategory.SOURCE, namesRelated = false)
+        assertEquals("unclassified", license.kind)
+        assertEquals("medium", license.effort)
+    }
+
+    @Test
+    fun `a dotfile with no stem is not a language boundary`() {
+        val e = CouplingKind.of("app/src/App.kt", "tools/.gitignore", FileCategory.SOURCE, namesRelated = false)
+        assertEquals("unclassified", e.kind)
+        assertEquals("medium", e.effort)
+        assertTrue("no language to compare" in e.note, e.note)
+    }
+
+    @Test
+    fun `an unmapped but real extension is still a language boundary`() {
+        // .php is not in the table, but it IS a language — this must not be softened.
+        assertEquals("php", CouplingKind.langKeyOrNull("legacy/Foo.php"))
+        val e = CouplingKind.of("web/Foo.kt", "legacy/Foo.php", FileCategory.SOURCE, namesRelated = true)
+        assertEquals("cross-language", e.kind)
+        assertEquals("high", e.effort)
+    }
+
+    @Test
+    fun `a mapped language still resolves normally`() {
+        assertEquals("jvm", CouplingKind.langKeyOrNull("a/A.kt"))
+        assertEquals("native", CouplingKind.langKeyOrNull("a/a.h"))
+        assertEquals(null, CouplingKind.langKeyOrNull("LICENSE"))
+        assertEquals(null, CouplingKind.langKeyOrNull("a/.editorconfig"))
+    }
+}
