@@ -102,10 +102,11 @@ class BoundaryMismatchDetector(
             .filter { it.a in context.headFiles && it.b in context.headFiles }
             .filter { boundaries.moduleOf(it.a) != boundaries.moduleOf(it.b) }
             .filter { it.confidence >= minConfidence }
-            // Companion pairs (Foo / DefaultFoo / FakeFoo) are expected to
-            // co-change; unrelated names are the architecturally surprising ones.
-            .sortedWith(compareBy<AnalysisContext.PairStat> { namesRelated(it.a, it.b) }
-                .thenByDescending { it.confidence * it.together })
+            // Rank by architectural interest, not raw strength: a surprising
+            // cross-module coupling with unrelated names and solid evidence beats
+            // an expected companion pair or a small-sample fluke. (All pairs here
+            // already cross a module boundary, so distance = 1.0.)
+            .sortedByDescending { Surprise.interest(it, architecturalDistance = 1.0) }
             .toList()
             // Rank per category so build files, docs, and generated code, which
             // always co-change, can't crowd production-code findings out of the list.
@@ -118,23 +119,8 @@ class BoundaryMismatchDetector(
     }
 
     companion object {
-        private val decorators = listOf("default", "fake", "impl", "abstract", "base", "stub", "mock", "real")
-
-        private fun stem(path: String): String {
-            var s = path.substringAfterLast('/').substringBefore('.').lowercase()
-            for (d in decorators) {
-                s = s.removePrefix(d).removeSuffix(d)
-            }
-            return s
-        }
-
-        /** True for pairs whose names predict the coupling: Foo/DefaultFoo, FooService/FakeFooService, Foo/FooTest. */
-        fun namesRelated(a: String, b: String): Boolean {
-            val sa = stem(a)
-            val sb = stem(b)
-            if (sa.length < 4 || sb.length < 4) return sa == sb
-            return sa.contains(sb) || sb.contains(sa)
-        }
+        /** True when names predict the coupling (Foo/DefaultFoo, Foo/FooTest): a threshold over the continuous similarity. */
+        fun namesRelated(a: String, b: String): Boolean = Surprise.nameSimilarity(a, b) >= 0.5
     }
 
     private fun toFinding(p: AnalysisContext.PairStat, context: AnalysisContext): Finding {
