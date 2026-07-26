@@ -79,6 +79,7 @@ class Analyze : CliktCommand(
             analyzedCommits = changes.sumOf { it.commits.size },
             logicalChanges = changes.size,
             findings = findings,
+            options = history.toAnalysisOptions(),
         )
         Store.save(repo, result, save)
 
@@ -132,10 +133,11 @@ class Pairs : CliktCommand(
     private val top by option("--top", help = "Number of pairs to show").int().restrictTo(min = 1).default(50)
     private val file by option("--file", help = "Only pairs involving a path containing this substring")
     private val category by option("--category", help = "Only pairs in this category (source, config, build, docs, generated)")
+    private val analysis by option("--analysis", help = "Reuse the conditions (window/excludes/change-unit) from a saved analysis snapshot")
 
     override fun run() {
         val repo = File(path).canonicalFile
-        val setup = Analysis.contextFor(repo, history.toAnalysisOptions())
+        val setup = Analysis.contextFor(repo, resolveOptions(path, analysis, history))
         val context = setup.context
         val headFiles = context.headFiles
         val boundaries = context.boundaries
@@ -170,10 +172,11 @@ class ClustersCommand : CliktCommand(
     private val top by option("--top", help = "Number of clusters to show").int().restrictTo(min = 1).default(10)
     private val category by option("--category", help = "Only files in this category (source, config, build, docs, generated)")
     private val show by option("--show", help = "Expand one cluster (by its number) to its full file list").int().restrictTo(min = 1)
+    private val analysis by option("--analysis", help = "Reuse the conditions (window/excludes/change-unit) from a saved analysis snapshot")
 
     override fun run() {
         val repo = File(path).canonicalFile
-        val setup = Analysis.contextFor(repo, history.toAnalysisOptions())
+        val setup = Analysis.contextFor(repo, resolveOptions(path, analysis, history))
         val context = setup.context
         val boundaries = context.boundaries
         val clusters = Clusters.build(context, minSupport, minJaccard) {
@@ -235,10 +238,11 @@ class MetricsCommand : CliktCommand(
     private val path by argument(help = "Path to the Git repository").default(".")
     private val history by HistoryOptions()
     private val asJson by option("--json", help = "Machine-readable output for recording runs over time").flag()
+    private val analysis by option("--analysis", help = "Reuse the conditions (window/excludes/change-unit) from a saved analysis snapshot")
 
     override fun run() {
         val repo = File(path).canonicalFile
-        val setup = Analysis.contextFor(repo, history.toAnalysisOptions())
+        val setup = Analysis.contextFor(repo, resolveOptions(path, analysis, history))
         val m = Metrics.compute(setup.context)
 
         if (asJson) {
@@ -313,6 +317,19 @@ class Inspect : CliktCommand(
             ?: error("no finding '$id' — available: ${result.findings.joinToString(", ") { it.id }}")
         echo(Store.encode(finding))
     }
+}
+
+/**
+ * The options a re-computing command (metrics/pairs/clusters) should use: its
+ * own [history] options normally, or — when [analysis] is given — the exact
+ * conditions the named snapshot was produced under, so its numbers line up with
+ * that analysis instead of silently defaulting to all-history/no-excludes.
+ */
+private fun resolveOptions(path: String, analysis: String?, history: HistoryOptions): AnalysisOptions {
+    if (analysis == null) return history.toAnalysisOptions()
+    val loaded = loadOrFail(path, analysis)
+    return loaded.options
+        ?: error("analysis '$analysis' predates recorded conditions — re-run: cochange analyze $path --save $analysis")
 }
 
 private fun loadOrFail(path: String, analysis: String = Store.DEFAULT_NAME): AnalysisResult {

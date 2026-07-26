@@ -131,4 +131,6 @@ data class AnalysisResult(
     val analyzedCommits: Int,
     val logicalChanges: Int,
     val findings: List<Finding>,
+    /** The exact conditions this snapshot was produced under, so later commands can reuse them. Null for pre-0.5 caches. */
+    val options: AnalysisOptions? = null,
 )

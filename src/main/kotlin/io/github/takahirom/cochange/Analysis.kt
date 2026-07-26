@@ -1,12 +1,15 @@
 package io.github.takahirom.cochange
 
+import kotlinx.serialization.Serializable
 import java.io.File
 
 /**
  * Everything the pipeline needs to know about how to read a repository's
  * history. Raw analysis facts only — finding thresholds stay with the
- * detectors and commands.
+ * detectors and commands. Serializable so a saved snapshot can record the exact
+ * conditions it was produced under, and later commands can reuse them.
  */
+@Serializable
 data class AnalysisOptions(
     val branch: String? = null,
     val since: String? = null,
