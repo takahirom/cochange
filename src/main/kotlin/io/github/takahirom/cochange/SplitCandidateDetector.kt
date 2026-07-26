@@ -45,14 +45,19 @@ class SplitCandidateDetector(
                 list.take(if (category == FileCategory.SOURCE) maxFindings else maxOtherCategoryFindings)
             }
 
-        // Full commit-time span over which the candidate co-changes with a group,
-        // so a reader can tell separate responsibilities from old/new eras.
-        fun activeSpan(file: String, component: List<String>): Pair<Long, Long>? {
+        /**
+         * The change units where the candidate moved together with this group,
+         * counted once each — unlike the summed pairwise link weight, which counts
+         * a unit again for every member it touched. Also yields the first and last
+         * of those units, so a reader can tell separate responsibilities from an
+         * old and a new era of the same one.
+         */
+        fun coChanges(file: String, component: List<String>): Triple<Int, Long, Long>? {
             val times = context.changes.asSequence()
                 .filter { file in it.files && component.any { m -> m in it.files } }
-                .flatMap { it.commits.asSequence().map { c -> c.epochSec } }
+                .map { unit -> unit.commits.minOf { it.epochSec } }
                 .toList()
-            return if (times.isEmpty()) null else times.min() to times.max()
+            return if (times.isEmpty()) null else Triple(times.size, times.min(), times.max())
         }
         fun day(epochSec: Long): String =
             java.time.Instant.ofEpochSecond(epochSec).atZone(java.time.ZoneOffset.UTC).toLocalDate().toString()
@@ -62,13 +67,19 @@ class SplitCandidateDetector(
             val name = file.substringAfterLast('/')
             val links = adjacency[file].orEmpty()
             val structuredGroups = c.components.map { component ->
-                val span = activeSpan(file, component)
+                val seen = coChanges(file, component)
                 SplitGroup(
                     files = component,
-                    support = component.sumOf { links[it] ?: 0 },
-                    activeFrom = span?.let { day(it.first) } ?: "",
-                    activeTo = span?.let { day(it.second) } ?: "",
+                    support = seen?.first ?: 0,
+                    linkWeight = component.sumOf { links[it] ?: 0 },
+                    firstSeen = seen?.let { day(it.second) } ?: "",
+                    lastSeen = seen?.let { day(it.third) } ?: "",
                 )
+            }
+            // Change units where the candidate moved with any group at all, counted once.
+            val ownChanges = context.changeCount(file)
+            val groupSupport = context.changes.count { unit ->
+                file in unit.files && c.components.any { comp -> comp.any { it in unit.files } }
             }
             val groups = c.components.mapIndexed { i, component ->
                 val names = component.take(5).joinToString(", ") { it.substringAfterLast('/') }
@@ -80,11 +91,21 @@ class SplitCandidateDetector(
                 type = type,
                 category = context.categoryOf(file),
                 summary = "$name belongs to ${c.components.size} independent change clusters",
-                confidence = round2(minOf(1.0, c.partnerSupport / 50.0)),
+                // Share of the candidate's own changes that involved one of the groups.
+                // Previously partnerSupport/50, an arbitrary scale unrelated to how
+                // often the file actually changes.
+                confidence = round2(groupSupport.toDouble() / ownChanges.coerceAtLeast(1)),
                 impact = if (c.components.size >= 3) "high" else "medium",
+                evidence = FindingEvidence(
+                    support = groupSupport,
+                    sampleSize = ownChanges,
+                    sampleMeaning = "change units touching $file",
+                    ratio = round2(groupSupport.toDouble() / ownChanges.coerceAtLeast(1)),
+                ),
                 detail = FindingDetail(
                     observation = "$file strongly co-changes with ${c.components.sumOf { it.size }} files that fall into " +
-                        "${c.components.size} groups with no co-change between them: ${groups.joinToString("; ")}.",
+                        "${c.components.size} groups with fewer than $minPartnerLink co-changes between any two " +
+                        "members of different groups: ${groups.joinToString("; ")}.",
                     interpretations = listOf(
                         "The file likely bundles several unrelated responsibilities, one per group.",
                         "Splitting it along the groups would let each change context evolve without touching the others.",
@@ -96,7 +117,7 @@ class SplitCandidateDetector(
                     metrics = mapOf(
                         "independentGroups" to c.components.size.toString(),
                         "partners" to c.components.sumOf { it.size }.toString(),
-                        "partnerSupport" to c.partnerSupport.toString(),
+                        "partnerLinkWeight" to c.partnerSupport.toString(),
                     ),
                     groups = structuredGroups,
                 ),

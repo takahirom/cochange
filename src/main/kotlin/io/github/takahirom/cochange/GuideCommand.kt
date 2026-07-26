@@ -66,9 +66,10 @@ private val GUIDE_TOPICS: Map<String, String> = linkedMapOf(
              Read the banner first: which change unit was chosen and why. If it
              warns about a release-only branch or a shallow clone, fix that
              before trusting any numbers (see: cochange guide change-unit).
-             If findings show most files in one module like "<root>", the
-             build system isn't auto-detected: inspect the directory layout
-             and re-run with --module-root '<dir-pattern>/*'.
+             Then read the "module detection" block. At trust=guessed,
+             boundary_mismatch and unstable_hub are WITHHELD, not empty:
+             the build system isn't auto-detected, so inspect the directory
+             layout and re-run with --module-root '<dir-pattern>/*'.
           2. cochange findings <repo> --json
              Findings are ordered source-first, strongest-first. Triage by
              type + impact; ignore build/docs categories on a first pass.
@@ -176,18 +177,38 @@ private val GUIDE_TOPICS: Map<String, String> = linkedMapOf(
         How to weigh a finding before acting on it.
 
         A finding is a review candidate backed by counts, not a proven defect.
-        Check, in order:
-          1. Support (together / participation count). Confidence 1.0 on 5
-             changes is weaker evidence than 0.7 on 80 changes.
-          2. counterSignals. One-directional coupling means the partner is
-             probably just a widely shared file. "Companion pair" means the
-             names already predicted the coupling — low surprise.
-          3. Both directions in metrics: P(A|B) vs P(B|A). Coupling that only
+
+        Three tiers, and every output labels which one it is (field: tier):
+          evidence       counted from commits. Wrong only if the history was
+                         read wrong (shallow clone, wrong window/change unit).
+          derived        structure inferred from the repo: modules, categories,
+                         roles, clusters. Best-effort; carries provenance.
+          interpretation findings, impact, effort. Heuristic.
+        Never quote an interpretation without checking the derived layer it
+        stands on: read moduleDetection.trust and .coverage. At trust=guessed,
+        module findings are not produced at all and skippedDetectors says so —
+        that is a withheld answer, not "nothing found".
+
+        Check a finding, in order:
+          1. evidence.support vs evidence.sampleSize, and read
+             evidence.sampleMeaning — the denominator differs per finding type.
+             confidence 1.0 from 5 of 5 is weaker than 0.7 from 80.
+             evidence.evidenceStrength is the sample-corrected number; prefer
+             it over the raw ratio when comparing two findings.
+          2. evidence.nameSimilarity. High means the names already predicted
+             the coupling (Foo / DefaultFoo) — low architectural surprise.
+             evidence.interest is what ranked the list; it is published so you
+             can re-rank yourself instead of trusting order.
+          3. counterSignals. One-directional coupling means the partner is
+             probably just a widely shared file.
+          4. Both directions in metrics: P(A|B) vs P(B|A). Coupling that only
              holds one way is a different (weaker) claim.
-          4. Category. build/config/docs co-change with everything by design;
+          5. Category. build/config/docs co-change with everything by design;
              they are ranked separately for a reason.
-          5. Staleness. A WARNING about a moved HEAD or shallow clone means
+          6. Staleness. A WARNING about a moved HEAD or shallow clone means
              re-run analyze before quoting numbers.
+        confidence is each type's own ratio and is not comparable across
+        types — see the field docs, or use evidence.* instead.
         Co-change measures "changed at the same times" only. Whether the files
         changed "for the same reasons" needs the supportingChanges commits —
         read two or three before claiming a shared reason.

@@ -14,7 +14,9 @@ object Store {
     /** The snapshot used when the user passes no `--save` / `--analysis` name. */
     const val DEFAULT_NAME = "findings"
 
-    private val json = Json { prettyPrint = true; ignoreUnknownKeys = true }
+    // encodeDefaults so schemaVersion and every `tier` are always present in the JSON
+// a consumer reads; ignoreUnknownKeys so a newer field doesn't break an older reader.
+    private val json = Json { prettyPrint = true; ignoreUnknownKeys = true; encodeDefaults = true }
 
     private val defaultBaseDir: File
         get() = File(System.getProperty("user.home"), ".cache/cochange")

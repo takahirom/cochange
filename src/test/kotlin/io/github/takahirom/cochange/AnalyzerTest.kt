@@ -243,7 +243,7 @@ class SplitCandidateGroupsTest {
     private fun commit(vararg files: String): Commit { t += 3600 * 24; return Commit("h$t", "a", t, "m", files.toList()) }
 
     @Test
-    fun `split_candidate exposes full groups with support and active period`() {
+    fun `split_candidate exposes full groups with support and the dates they were seen`() {
         val head = setOf("Hub.kt", "A1.kt", "A2.kt", "B1.kt", "B2.kt")
         val changes = buildList {
             repeat(6) { add(LogicalChange(listOf(commit("Hub.kt", "A1.kt", "A2.kt")))) }
@@ -255,8 +255,30 @@ class SplitCandidateGroupsTest {
         val groups = finding.detail.groups
         assertEquals(2, groups.size)
         assertTrue(groups.all { it.files.size == 2 }, "each group has its full file list")
-        assertTrue(groups.all { it.support > 0 })
-        assertTrue(groups.all { it.activeFrom.isNotEmpty() && it.activeTo.isNotEmpty() })
+        // 6 change units per group, each touching both members — support counts the
+        // units once, linkWeight sums the two pairwise counts.
+        assertTrue(groups.all { it.support == 6 }, "support counts change units: ${groups.map { it.support }}")
+        assertTrue(groups.all { it.linkWeight == 12 }, "linkWeight sums pair counts: ${groups.map { it.linkWeight }}")
+        assertTrue(groups.all { it.firstSeen.isNotEmpty() && it.lastSeen.isNotEmpty() })
+    }
+
+    @Test
+    fun `split_candidate confidence is the share of the file's own changes, not an arbitrary scale`() {
+        val head = setOf("Hub.kt", "A1.kt", "A2.kt", "B1.kt", "B2.kt")
+        val changes = buildList {
+            repeat(6) { add(LogicalChange(listOf(commit("Hub.kt", "A1.kt", "A2.kt")))) }
+            repeat(6) { add(LogicalChange(listOf(commit("Hub.kt", "B1.kt", "B2.kt")))) }
+            // Hub also changes on its own: the groups explain 12 of 16 of its changes.
+            repeat(4) { add(LogicalChange(listOf(commit("Hub.kt")))) }
+        }
+        val finding = Analyzer(minSupport = 5, minConfidence = 0.6)
+            .analyze(changes, Boundaries(head), head)
+            .single { it.type == "split_candidate" }
+        val evidence = finding.evidence!!
+        assertEquals(12, evidence.support)
+        assertEquals(16, evidence.sampleSize)
+        assertEquals(0.75, finding.confidence)
+        assertEquals(EvidenceTier.INTERPRETATION, finding.tier)
     }
 }
 
