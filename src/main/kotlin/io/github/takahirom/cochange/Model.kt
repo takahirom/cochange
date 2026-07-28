@@ -57,15 +57,27 @@ data class Finding(
     val confidence: Double,
     val impact: String,
     /**
-     * The files this finding is about — the pair, the hub, or the split candidate.
-     * Summaries abbreviate paths for readability, so a consumer needs these to act
-     * on a finding without parsing prose.
+     * Every file this finding is about, unordered: both sides of a pair, the hub, or a
+     * split candidate together with all of its partners. Summaries abbreviate paths for
+     * readability, so a consumer needs these to act on a finding without parsing prose.
+     * When you need "which file is this finding ABOUT", use [subjects] — position in
+     * this list carries no meaning.
      */
     val files: List<String> = emptyList(),
+    /**
+     * The file(s) the finding is making a claim about, as opposed to the context they
+     * were found against: the two sides of a `boundary_mismatch`, the hub, the split
+     * candidate. For a split candidate [files] additionally holds every partner, and
+     * "the candidate is first" used to be an unwritten convention a consumer had to
+     * guess at.
+     */
+    val subjects: List<String> = emptyList(),
     /** Always [EvidenceTier.INTERPRETATION]: a finding is a review candidate, not a measurement. */
     val tier: String = EvidenceTier.INTERPRETATION,
     /** The counted numbers underneath, with the denominator spelled out. */
     val evidence: FindingEvidence? = null,
+    /** How this finding was ranked, and against what — interpretation, not evidence. */
+    val ranking: FindingRanking? = null,
     /** Rough effort to act on this finding (none/low/medium/high), so it can be read for ROI, not just impact. Empty when not estimated. */
     val effort: String = "",
     val detail: FindingDetail,
@@ -85,10 +97,24 @@ object FileCategory {
     /** Display and ranking priority: production code first, generated code last (mostly noise). */
     val priority = listOf(SOURCE, CONFIG, BUILD, DOCS, GENERATED)
 
-    private val buildNames = setOf(
+    /**
+     * Build-definition file names, lowercased. ONE list, shared with module detection —
+     * `Boundaries` kept its own, so `pyproject.toml` was a module root there and a
+     * *config* file here, and a pyproject/source pair came out as "two languages meeting".
+     */
+    val buildNames = setOf(
         "build.gradle", "build.gradle.kts", "settings.gradle", "settings.gradle.kts",
         "pom.xml", "package.json", "package-lock.json", "cargo.toml", "go.mod", "go.sum",
         "gemfile", "makefile", "dockerfile",
+        "pyproject.toml", "setup.py", "cmakelists.txt", "mix.exs", "build.bazel", "build",
+        "package.swift",
+    )
+
+    /** The subset that marks a directory as a module root, in their on-disk spelling. */
+    val moduleRootFileNames = setOf(
+        "build.gradle", "build.gradle.kts", "package.json", "Cargo.toml", "go.mod", "pom.xml",
+        "BUILD.bazel", "BUILD", "pyproject.toml", "setup.py", "CMakeLists.txt", "mix.exs",
+        "Package.swift",
     )
     private val configExtensions = setOf("yml", "yaml", "json", "properties", "toml", "cfg", "ini")
 
@@ -136,9 +162,10 @@ object FileCategory {
  * `metrics: Map<String, String>` (whose keys embedded file paths) could not be.
  *
  * [ratio] alone is misleading on small samples: 5 out of 5 is 1.0 and means very
- * little. [evidenceStrength] and [interest] are the sample-corrected numbers the
- * ranking actually uses, exposed here so a consumer can apply the same judgement
- * instead of trusting list order.
+ * little, so [evidenceStrength] is the sample-corrected figure to compare on.
+ * The ranking heuristic lives in [FindingRanking], not here — it used to sit in
+ * this block under `tier: "evidence"`, which is exactly the confusion the tiers
+ * exist to prevent.
  */
 @Serializable
 data class FindingEvidence(
@@ -150,13 +177,31 @@ data class FindingEvidence(
     val sampleMeaning: String,
     /** [support] / [sampleSize]. */
     val ratio: Double,
-    /** Sample-corrected pair strength (Wilson-bounded Jaccard × log support). Null when the finding isn't about one pair. */
+    /**
+     * Sample-corrected strength (Wilson-bounded ratio × log support), over this
+     * finding type's own denominator. Comparable between findings of the same type,
+     * not across types.
+     */
     val evidenceStrength: Double? = null,
-    /** The score that ordered these findings. Null when this type was ordered by something else. */
-    val interest: Double? = null,
-    /** 0..1 name overlap. High means the coupling was predictable from the names alone. */
-    val nameSimilarity: Double? = null,
     val tier: String = EvidenceTier.EVIDENCE,
+)
+
+/**
+ * Why a finding sits where it does in the list. Interpretation, not evidence: it
+ * weighs counted strength against how much the file names alone already predicted
+ * the coupling, and that weighting is a judgement call. Both inputs are here so a
+ * consumer can re-rank on [FindingEvidence.evidenceStrength] alone.
+ *
+ * Only `boundary_mismatch` has this — the other types have no pair of names to
+ * compare, and the fields are absent rather than faked.
+ */
+@Serializable
+data class FindingRanking(
+    /** The score that ordered the list: evidenceStrength x (1 - 0.5 x nameSimilarity). */
+    val interest: Double,
+    /** 0..1 token overlap of the two basenames. High means the names predicted this. */
+    val nameSimilarity: Double,
+    val tier: String = EvidenceTier.INTERPRETATION,
 )
 
 @Serializable
@@ -164,10 +209,43 @@ data class FindingDetail(
     val observation: String,
     val interpretations: List<String>,
     val counterSignals: List<String>,
-    val supportingChanges: List<String>,
+    /**
+     * The change units backing this finding, each with ALL of its commits. Storing
+     * only the first commit of each unit meant an author-window unit — commit 1
+     * touches A.kt, commit 2 touches B.kt ten minutes later — looked like a change
+     * to A.kt alone, which is exactly the wrong conclusion to invite.
+     */
+    val supportingChanges: List<SupportingChange>,
     val metrics: Map<String, String> = emptyMap(),
     /** For split_candidate: the independent partner clusters, in full, with their support and active period. */
     val groups: List<SplitGroup> = emptyList(),
+    /**
+     * Mixed by construction: `observation` restates counts, `interpretations` and
+     * `counterSignals` are readings of them. Labelled interpretation because that is
+     * the weakest thing in the block, and a block is only as solid as its softest field.
+     */
+    val tier: String = EvidenceTier.INTERPRETATION,
+)
+
+/**
+ * One change unit that backs a finding. A unit is not always one commit: under
+ * `author-window` it is every commit by the same author inside the window, and the
+ * co-change evidence comes from the unit as a whole, so all of its commits belong
+ * here.
+ */
+@Serializable
+data class SupportingChange(
+    val hashes: List<String>,
+    /**
+     * The finding's own files this unit touched, recorded at analysis time.
+     *
+     * It cannot be rebuilt later from `git show`: the log is read with `-M`, so a file
+     * renamed *after* this commit is stored under its current path while the commit
+     * itself still names the old one. Reconstructing from churn therefore dropped
+     * exactly the files a rename had moved.
+     */
+    val filesTouched: List<String> = emptyList(),
+    val tier: String = EvidenceTier.EVIDENCE,
 )
 
 /**
@@ -178,7 +256,14 @@ data class FindingDetail(
  */
 @Serializable
 data class SplitGroup(
+    /** The group's members that are shown. Excluded roles are omitted; see [hiddenMembers]. */
     val files: List<String>,
+    /**
+     * Members omitted by `--exclude-role`. The group's [support] and [linkWeight] still
+     * count them, because a role filter must not move a number — this says how much of
+     * the group you are not being shown.
+     */
+    val hiddenMembers: Int = 0,
     /** Change units in which the candidate changed together with at least one file in this group. */
     val support: Int,
     /**
@@ -194,6 +279,7 @@ data class SplitGroup(
      * continuous activity — the group may have been idle for most of it.
      */
     val lastSeen: String,
+    val tier: String = EvidenceTier.DERIVED,
 )
 
 @Serializable
@@ -231,7 +317,23 @@ data class AnalysisResult(
      * view filter, not a smaller dataset.
      */
     val hiddenByRole: Map<String, Int> = emptyMap(),
+    /**
+     * Conditions that make these numbers less trustworthy — an unparseable window, a
+     * shallow clone, guessed module boundaries. Present here and not only in the
+     * banner, because `--json` prints no banner and an empty `findings` list from a
+     * broken window is indistinguishable from a clean repository otherwise.
+     */
+    val warnings: List<AnalysisWarning> = emptyList(),
+    /**
+     * Every detector type this version can produce, serialized so a consumer never has to
+     * hard-code the roster to tell "this type found nothing" from "this type did not run".
+     * Compare against [skippedDetectors].
+     */
+    val detectorTypes: List<String> = DETECTOR_TYPES,
 )
+
+/** The complete detector roster, published in every result. */
+val DETECTOR_TYPES = listOf("boundary_mismatch", "unstable_hub", "split_candidate")
 
 /**
  * Version 2 renamed nothing silently: `confidence` is now documented per detector

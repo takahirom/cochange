@@ -66,21 +66,36 @@ private val GUIDE_TOPICS: Map<String, String> = linkedMapOf(
              Read the banner first: which change unit was chosen and why. If it
              warns about a release-only branch or a shallow clone, fix that
              before trusting any numbers (see: cochange guide change-unit).
-             Then read the "module detection" block. At trust=guessed,
-             boundary_mismatch and unstable_hub are WITHHELD, not empty:
-             the build system isn't auto-detected, so inspect the directory
-             layout and re-run with --module-root '<dir-pattern>/*'.
+             Then read the "module detection" block. Findings are only made
+             about files on both sides of a boundary the repo DECLARES (build
+             file, SwiftPM target, --module-root glob). With fewer than two
+             declared modules, boundary_mismatch and unstable_hub are WITHHELD
+             entirely, not empty — split_candidate needs no boundaries and
+             still runs. Low coverage means individual pairs were dropped
+             instead. Either way: inspect the directory layout and
+             re-run with --module-root '<dir-pattern>/*'. Go and Python
+             packages are detected from the language's own rule (a directory
+             of .go files; a directory with __init__.py or __init__.pyi), so those need no
+             flag; an explicit --module-root always wins over them.
           2. cochange findings <repo> --json
-             Findings are ordered source-first, strongest-first. Triage by
-             type + impact; ignore build/docs categories on a first pass.
+             Findings are grouped source-first; within boundary_mismatch they
+             are ordered by `interest`, and the other two types keep detector
+             order. So finding-1 is not necessarily the strongest thing in the
+             list — compare evidence.evidenceStrength within a type yourself.
+             Triage by type + impact; ignore build/docs on a first pass.
           3. cochange inspect <finding-id> <repo>
              Read observation, counterSignals, and evidence — not just the
-             summary. supportingCommits give each backing change's subject,
-             date, and per-file churn: read two or three before claiming the
-             files change for the same reason.
+             summary. supportingChanges gives each backing CHANGE UNIT, with
+             every commit in it (subject, date, per-file churn) and
+             filesTouched — the finding's files that unit actually moved. Read
+             two or three before claiming the files change for the same reason.
+             A unit can be several commits, so judge the unit, not one commit.
           4. cochange clusters <repo> --category source
-             The de-facto change units. Use when findings feel fragmented —
-             clusters show the whole group a pair belongs to.
+             Groups of files linked by co-change. A cluster is a connected
+             component, so it is transitive: A-B and B-C with no A-C still
+             yields one {A,B,C} cluster, and no such change unit need ever
+             have existed. Use it to see the whole neighbourhood a pair sits
+             in, then check whether a real change touched the whole group.
           5. cochange pairs <repo> --file <substring>
              Drill into one file: every partner it co-changes with.
         Then pick the goal playbook that matches what you found:
@@ -99,17 +114,22 @@ private val GUIDE_TOPICS: Map<String, String> = linkedMapOf(
           2. For each candidate, inspect it and check metrics: both directional
              probabilities strong -> genuine shared change reason. One-sided ->
              the partner may just be a widely shared file; deprioritize.
-          3. Read two or three supportingCommits: subject and per-file churn
-             say what actually changed together. An interface mirrored into an
-             implementation? A flag definition plus its fake? Churn concentrated
-             on one side each time suggests one file is merely dragged along.
+          3. Read two or three supportingChanges: each unit's commits, subjects
+             and per-file churn say what actually changed together. An interface
+             mirrored into an implementation? A flag definition plus its fake?
+             Churn concentrated on one side each time suggests one file is
+             merely dragged along — but check filesTouched first, because one
+             unit can spread the two sides across separate commits.
         Options to propose, in order of preference:
           - Move the pair into the module where the change reason lives.
           - Introduce an interface/abstraction that absorbs the shared reason,
             so one side stops changing.
           - If one side is test support (a Fake), generate or colocate it.
         Done when the proposal names which file moves where (or which seam is
-        added) and cites the co-change count as the expected saving.
+        added) and cites the co-change count as the size of the coupling. That
+        count is NOT an edit saving: moving two files into one module leaves
+        both edits in place. Only an intervention that removes one side's edit
+        saves work, and git history cannot estimate that counterfactual.
     """.trimIndent() + READING_TRAILER,
 
     "reduce-change-tax" to """
@@ -119,7 +139,7 @@ private val GUIDE_TOPICS: Map<String, String> = linkedMapOf(
         Recipe:
           1. cochange findings <repo> --type unstable_hub --json
           2. For each hub, decide additive vs structural churn:
-             `git -C <repo> show <hash>` a few supportingChanges. Lines only
+             `git -C <repo> show <hash>` a few supportingChanges hashes. Lines only
              ADDED to a list/registry each time (DI wiring, version catalogs,
              flag registries) = additive. Logic edited each time = structural.
           3. Additive churn: acceptable, or automate the registration
@@ -135,11 +155,14 @@ private val GUIDE_TOPICS: Map<String, String> = linkedMapOf(
     "split-god-class" to """
         == guide: split-god-class ==
         Act on split_candidate: a file whose co-change partners form groups
-        that never co-change with each other.
+        that rarely co-change with each other (below the partner-link
+        threshold, which is not the same as never).
 
         Recipe:
           1. cochange findings <repo> --type split_candidate --json
-             The groups in the observation ARE the proposed split lines.
+             The groups in the observation are candidate split lines, not
+             the answer: they come from a link threshold, so members of
+             different groups may still co-change occasionally.
           2. Counter-check eras: groups can be old vs new caller generations
              or platform variants, not separable responsibilities. Compare each
              group's firstSeen/lastSeen — if one ended where the other began,
@@ -166,8 +189,11 @@ private val GUIDE_TOPICS: Map<String, String> = linkedMapOf(
              (screen + logic + tests moving together) is a ready-made
              extraction proposal.
           2. cochange findings <repo> --type unstable_hub
-             Hubs work without boundaries; extracting a cluster that a hub
-             belongs to won't help until the hub itself is addressed.
+             Note unstable_hub needs declared module boundaries too — its
+             threshold is "spans 5+ other modules" — so in a single-module
+             repo it is withheld. Declare roots with --module-root first.
+             Extracting a cluster a hub belongs to won't help until the hub
+             itself is addressed.
           3. cochange findings <repo> --type split_candidate
              God classes must be split before their cluster can be extracted
              cleanly.
@@ -189,30 +215,58 @@ private val GUIDE_TOPICS: Map<String, String> = linkedMapOf(
                          roles, clusters. Best-effort; carries provenance.
           interpretation findings, impact, effort. Heuristic.
         Never quote an interpretation without checking the derived layer it
-        stands on: read moduleDetection.trust and .coverage. At trust=guessed,
-        module findings are not produced at all and skippedDetectors says so —
-        that is a withheld answer, not "nothing found".
+        stands on: read moduleDetection.trust, .coverage, and
+        .declaredModuleCount. Every module finding you DO see has both of its
+        files inside a module the repository declares; pairs resting on a
+        guessed folder name are dropped one by one, so low coverage means "you
+        are seeing less", not "these are guesses". With fewer than two declared
+        modules the two module-dependent detectors do not run at all and
+        skippedDetectors says so — a withheld answer, not "nothing found".
+        split_candidate needs no boundaries and is unaffected. detectorTypes
+        lists the full roster, so you never have to guess which ran.
 
         Check a finding, in order:
           1. evidence.support vs evidence.sampleSize, and read
              evidence.sampleMeaning — the denominator differs per finding type.
              confidence 1.0 from 5 of 5 is weaker than 0.7 from 80.
              evidence.evidenceStrength is the sample-corrected number; prefer
-             it over the raw ratio when comparing two findings.
-          2. evidence.nameSimilarity. High means the names already predicted
-             the coupling (Foo / DefaultFoo) — low architectural surprise.
-             evidence.interest is what ranked the list; it is published so you
-             can re-rank yourself instead of trusting order.
+             it over the raw ratio when comparing two findings OF THE SAME
+             type. It is present for all three types, but each type's
+             denominator differs, so it is not comparable across types.
+          2. ranking.nameSimilarity and ranking.interest exist for
+             boundary_mismatch only — the other two types have no pair of names
+             to compare, and the fields are null rather than faked. High
+             ranking.nameSimilarity means the names already predicted the
+             coupling (Foo / DefaultFoo): low architectural surprise. They live
+             in `ranking`, not `evidence` — a ranking heuristic is not a count.
+             interest is what
+             ordered the list, and interest can put a small-sample surprising
+             pair above a well-supported predictable one. Sort by
+             evidenceStrength yourself if that is not what you want.
           3. counterSignals. One-directional coupling means the partner is
              probably just a widely shared file.
           4. Both directions in metrics: P(A|B) vs P(B|A). Coupling that only
              holds one way is a different (weaker) claim.
           5. Category. build/config/docs co-change with everything by design;
              they are ranked separately for a reason.
-          6. Staleness. A WARNING about a moved HEAD or shallow clone means
-             re-run analyze before quoting numbers.
+          6. Hidden roles. --exclude-role never changes a number, only what is
+             listed, so every count you see still includes the hidden files.
+             Each listing says how many it is not showing: hiddenByRole (per
+             role, per run), cluster.hiddenFiles vs cluster.fileCount,
+             SplitGroup.hiddenMembers, metrics.hubCount vs hubFiles,
+             compare's summarizedFiles vs moves. If a list looks shorter than
+             its own counts, that is why — do not read it as evidence changing.
+          7. warnings. Every JSON output carries them (code + severity +
+             message). severity=warning means STOP: the numbers rest on a
+             truncated or empty history. window_is_now means the --since
+             string was not a date git understood, so "no findings" says
+             nothing about the repository. shallow_clone means unshallow first.
+             Do not read an empty findings list before reading this.
         confidence is each type's own ratio and is not comparable across
         types — see the field docs, or use evidence.* instead.
+        Act on finding.subjects, not finding.files: files also holds the context
+        a finding was found against (for a split candidate, every partner), and
+        position in it means nothing.
         Co-change measures "changed at the same times" only. Whether the files
         changed "for the same reasons" needs the supportingChanges commits —
         read two or three before claiming a shared reason.
@@ -248,6 +302,13 @@ private val GUIDE_TOPICS: Map<String, String> = linkedMapOf(
         == guide: small-repo ==
         Few commits (young repo, or a short --since window).
 
+        First read the run's own numbers: "N change units" in the banner, and the
+        few_change_units warning if present. It states what share of the whole
+        history a finding would have to rest on — at 10 units and
+        --min-support 5 that is 50%, which is a sample problem, not a
+        threshold problem. Watch the commits-per-unit note too: author-window
+        can compress a burst-committed repo hard.
+
         Defaults assume years of history. With hundreds of changes or fewer:
           1. Drop --since entirely (analyze the whole history).
           2. Lower the bars: --min-support 3 --min-confidence 0.5, and for
@@ -255,6 +316,9 @@ private val GUIDE_TOPICS: Map<String, String> = linkedMapOf(
           3. Expect few or no findings — that's a valid result, not a failure.
              Say "not enough history for strong claims" instead of forcing
              weak findings into conclusions.
+          4. Raw evidence is never gated, so `pairs` and `clusters` still work
+             at a lower --min-support even when every detector was withheld.
+             In a one-module repo that IS the answer: see guide extract-module.
         Every threshold you lowered must be reported alongside the findings;
         support-3 evidence is a hint, not a case.
     """.trimIndent(),

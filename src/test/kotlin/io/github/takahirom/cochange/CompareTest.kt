@@ -57,11 +57,17 @@ class CompareTest {
     }
 
     @Test
-    fun `a recent window inside the baseline is reported as overlapping`() {
+    fun `nesting is reported, because overlap is unconditional`() {
         val wide = Compare.Window("180d", "2025-01-01T00:00:00Z", 100, 80)
         val narrow = Compare.Window("30d", "2025-06-01T00:00:00Z", 20, 15)
-        assertTrue(Compare.overlaps(wide, narrow), "the two samples are not independent, and that must be stated")
-        assertTrue(!Compare.overlaps(narrow, wide))
+        assertTrue(
+            Compare.recentIsInsideBaseline(wide, narrow),
+            "the intended usage: the samples are not independent, and that must be stated",
+        )
+        // Swapping them does not make the windows independent — both still end at HEAD.
+        // The old field was named `windowsOverlap` and returned false here, which was
+        // simply untrue; this reports the swap instead.
+        assertTrue(!Compare.recentIsInsideBaseline(narrow, wide), "--baseline 30d --recent 180d is reversed")
     }
 
     @Test
@@ -69,5 +75,38 @@ class CompareTest {
         val head = setOf("A.kt", "B.kt")
         val ctx = AnalysisContext(List(2) { LogicalChange(listOf(commit("A.kt", "B.kt"))) }, Boundaries(head), head)
         assertTrue(Compare.of(ctx, ctx, minCount = 3).moves.isEmpty())
+    }
+}
+
+/**
+ * `--category` scopes the question, so the summary must describe the same set the listing
+ * does. Filtering after summarising reported movers the caller had excluded.
+ */
+class CompareCategoryScopeTest {
+    private var t = 0L
+    private fun commit(vararg files: String): Commit { t += 3600 * 24; return Commit("h$t", "a", t, "m", files.toList()) }
+
+    @Test
+    fun `a category filter scopes the summary, not only the listing`() {
+        val head = setOf("app/App.kt", "app/build.gradle.kts", "core/Core.kt")
+        // build.gradle.kts heats up; the Kotlin files stay flat.
+        val baseline = AnalysisContext(
+            List(10) { LogicalChange(listOf(commit("app/App.kt", "core/Core.kt"))) },
+            Boundaries(head), head,
+        )
+        val recent = AnalysisContext(
+            List(10) { LogicalChange(listOf(commit("app/App.kt", "core/Core.kt"))) } +
+                List(10) { LogicalChange(listOf(commit("app/build.gradle.kts", "core/Core.kt"))) },
+            Boundaries(head), head,
+        )
+        val sourceOnly = Compare.of(baseline, recent, minCount = 1) { it.endsWith(".kt") }
+        assertTrue(
+            sourceOnly.moves.none { it.file.endsWith(".gradle.kts") },
+            "the listing excludes the build file: ${sourceOnly.moves.map { it.file }}",
+        )
+        assertEquals(
+            sourceOnly.moves.count { it.delta > 0 }, sourceOnly.summary.heating,
+            "the summary must count exactly what it lists",
+        )
     }
 }

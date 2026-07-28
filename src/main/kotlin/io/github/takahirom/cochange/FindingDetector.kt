@@ -41,16 +41,30 @@ class AnalysisContext(
     val excludedRoles: Set<String> = emptySet(),
 ) {
     /** True when [path]'s role was excluded, so it should not be shown or reported on. */
+    // isVisible runs per pair endpoint, so on a large repo FileRole.of would re-lowercase
+    // and re-scan the same paths hundreds of thousands of times.
+    private val roleCache = HashMap<String, String>()
+
+    private fun roleOf(path: String): String = roleCache.getOrPut(path) { FileRole.of(path, generated) }
+
     fun isHidden(path: String): Boolean =
-        excludedRoles.isNotEmpty() && FileRole.of(path) in excludedRoles
+        excludedRoles.isNotEmpty() && roleOf(path) in excludedRoles
 
     /** A file worth showing: still present at HEAD, and not hidden by an excluded role. */
     fun isVisible(path: String): Boolean = path in headFiles && !isHidden(path)
 
+    /**
+     * True when this file's module comes from something the repository declares
+     * (a build file, a SwiftPM target, a `--module-root` glob) rather than from a
+     * top-level directory name. A finding whose claim is "these live in different
+     * modules" is only worth making about files that pass this.
+     */
+    fun moduleIsDeclared(path: String): Boolean = boundaries.sourceOf(path).declared
+
     /** How many analyzed files each excluded role is hiding, for the "and here's what you're not seeing" line. */
     val hiddenByRole: Map<String, Int> by lazy {
         if (excludedRoles.isEmpty()) emptyMap() else analyzedFiles
-            .groupingBy { FileRole.of(it) }.eachCount()
+            .groupingBy(::roleOf).eachCount()
             .filterKeys { it in excludedRoles }
     }
 
@@ -117,11 +131,77 @@ class AnalysisContext(
             PairStat(idToPath[aId], idToPath[bId], together, fileChangeCountById[aId]!!, fileChangeCountById[bId]!!)
         }
 
-    /** Sample commit hashes (newest-first order of [changes]) touching all of [files]. */
-    fun sampleChanges(files: Set<String>, limit: Int = 10): List<String> =
+    /**
+     * The hub statistics both `unstable_hub` and `metrics` read, computed once here so
+     * the two cannot drift apart — they previously used different populations while a
+     * comment claimed they shared one predicate.
+     *
+     * Participation is counted over every multi-file change unit. Only DECLARED modules
+     * count towards the spread: "spans 5 other modules" has to mean five boundaries the
+     * repository itself draws.
+     */
+    class HubStats(
+        val multiFileChanges: List<LogicalChange>,
+        val participation: Map<String, Int>,
+        val partnerModules: Map<String, Set<String>>,
+    )
+
+    val hubStats: HubStats by lazy {
+        val multiFileChanges = changes.filter { it.files.size >= 2 }
+        val participation = HashMap<String, Int>()
+        val partnerModules = HashMap<String, MutableSet<String>>()
+        for (change in multiFileChanges) {
+            val modules = change.files.filter(::moduleIsDeclared).map(boundaries::moduleOf).toSet()
+            for (file in change.files) {
+                participation.merge(file, 1, Int::plus)
+                partnerModules.getOrPut(file) { HashSet() }.addAll(modules - boundaries.moduleOf(file))
+            }
+        }
+        HubStats(multiFileChanges, participation, partnerModules)
+    }
+
+    /**
+     * Files meeting the hub predicate: declared, busy enough, spread wide enough.
+     *
+     * Deliberately NOT filtered by [isVisible]. `--exclude-role` is documented as a view
+     * filter that never shifts a number, and hiding a hub from this set raised
+     * `hubFreeRate` — the rate must be computed over the whole population. Callers that
+     * *display* files filter for visibility themselves.
+     */
+    fun hubFiles(minParticipation: Int, minModuleSpread: Int): List<String> =
+        hubStats.participation
+            .filter { (file, count) ->
+                moduleIsDeclared(file) && count >= minParticipation &&
+                    (hubStats.partnerModules[file]?.size ?: 0) >= minModuleSpread
+            }
+            .keys
+            .sortedByDescending { hubStats.participation[it] }
+
+    /**
+     * Sample change units (newest-first order of [changes]) touching all of [files],
+     * each with every commit it contains — the unit, not its first commit, is what
+     * the co-change evidence was counted from.
+     */
+    fun sampleChanges(files: Set<String>, limit: Int = 10): List<SupportingChange> =
         changes.asSequence()
             .filter { it.files.containsAll(files) }
             .take(limit)
-            .map { it.hashes.first() }
+            .map { unit -> SupportingChange(unit.hashes, unit.files.filter { it in files }.sorted()) }
             .toList()
+
+    /**
+     * As [sampleChanges], but for a finding about one file among many partners: sample the
+     * units where [subject] moved together with at least one of them.
+     *
+     * The partner check has to come BEFORE `take`, or the first units touching the subject
+     * alone are returned and a "supporting change" shows no co-change at all.
+     */
+    fun sampleChangesTouching(subject: String, findingFiles: Set<String>, limit: Int = 10): List<SupportingChange> {
+        val partners = findingFiles - subject
+        return changes.asSequence()
+            .filter { unit -> subject in unit.files && unit.files.any { it in partners } }
+            .take(limit)
+            .map { unit -> SupportingChange(unit.hashes, unit.files.filter { it in findingFiles }.sorted()) }
+            .toList()
+    }
 }

@@ -49,6 +49,15 @@ object GitLog {
             add("show")
             add("--no-patch")
             add("--numstat")
+            // A merge commit needs a diff against its FIRST PARENT — the same diff the
+            // merge change unit counted, and the same flag readCommits uses. Without any
+            // of this `git show --numstat` prints nothing for a merge, so in a merge-based
+            // repository every supporting change came back with no files at all.
+            //
+            // Not `-m --first-parent`: -m asks for a separate diff against every parent
+            // and --first-parent only restricts history traversal, which git show is not
+            // doing here — so an octopus merge would have contributed its side parents too.
+            add("--diff-merges=first-parent")
             add("--date=short")
             add("--pretty=format:$COMMIT_SEP%H$FIELD_SEP%ad$FIELD_SEP%an$FIELD_SEP%s")
             addAll(hashes)
@@ -60,17 +69,32 @@ object GitLog {
                 val lines = block.lines()
                 val fields = lines.first().split(FIELD_SEP)
                 if (fields.size < 4) return@mapNotNull null
-                // `git show --numstat --no-patch` prints numstat for non-merges only,
-                // so churn is absent for a merge commit rather than wrong.
+                // Churn is restricted to the finding's files, and rename forms are
+                // resolved to the post-rename path so a moved file still counts.
                 val churn = lines.drop(1).mapNotNull { line ->
                     val parts = line.split('\t')
                     if (parts.size < 3) return@mapNotNull null
-                    val path = parts[2]
+                    val path = renameTarget(parts[2])
                     if (path !in files) return@mapNotNull null
                     path to ((parts[0].toIntOrNull() ?: 0) + (parts[1].toIntOrNull() ?: 0))
                 }.toMap()
                 CommitSummary(fields[0], fields[1], fields[2], fields[3].trim(), churn)
             }
+    }
+
+    /**
+     * The post-rename path from a numstat line. With `-M`, git writes a rename as
+     * `old => new` or `pre/{old => new}/post`; comparing those raw strings against the
+     * finding's current paths silently dropped every renamed file's churn.
+     */
+    internal fun renameTarget(path: String): String {
+        if ("=>" !in path) return path
+        val braced = Regex("""\{([^{}]*) => ([^{}]*)\}""").find(path)
+        if (braced != null) {
+            return (path.substring(0, braced.range.first) + braced.groupValues[2] +
+                path.substring(braced.range.last + 1)).replace("//", "/").trim('/')
+        }
+        return path.substringAfter("=>").trim()
     }
 
     fun headFiles(repo: File, branch: String?): Set<String> =

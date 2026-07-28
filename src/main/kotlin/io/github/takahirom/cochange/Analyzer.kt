@@ -1,5 +1,7 @@
 package io.github.takahirom.cochange
 
+import kotlin.math.ln
+
 fun defaultDetectors(minSupport: Int = 5, minConfidence: Double = 0.6): List<FindingDetector> = listOf(
     BoundaryMismatchDetector(minSupport = minSupport, minConfidence = minConfidence),
     UnstableHubDetector(),
@@ -67,39 +69,149 @@ object CouplingKind {
      * family; unknown ones fall back to the raw extension so an unrecognized
      * language is never silently treated as "same" as a different one.
      */
+    /**
+     * A file's language family, or null when the path carries no language at all — no
+     * extension (`LICENSE`, `Makefile`) or a dotfile with no stem (`.gitignore`). Those
+     * used to fall through to the raw extension and be compared as if they were code, so
+     * `App.kt` x `.gitignore` came out as "jvm vs gitignore, expensive to break".
+     *
+     * An unmapped but real extension still returns a key (`php` -> "php"), so a genuine
+     * language boundary is not understated just because the table is thin.
+     */
+    fun langKeyOrNull(path: String): String? {
+        val name = path.substringAfterLast('/')
+        val stem = name.substringBeforeLast('.', "")
+        // "LICENSE" has no dot; ".gitignore" has one but nothing before it.
+        if ('.' !in name || stem.isEmpty()) return null
+        return langKey(path)
+    }
+
     private fun langKey(path: String): String {
         val ext = path.substringAfterLast('.', "").lowercase()
         return when (ext) {
             "kt", "kts", "java" -> "jvm"
             "swift" -> "swift"
-            "m", "mm" -> "objc"
+            // C, C++, Objective-C and their shared headers are one native family: a
+            // foo.c / foo.h or foo.mm / foo.h pair is a companion, not a platform boundary.
+            "c", "h", "hh" -> "native"
             "ts", "tsx", "js", "jsx" -> "js"
             "py", "pyi" -> "py"
             "go" -> "go"
             "rs" -> "rust"
             "dart" -> "dart"
             "rb" -> "ruby"
-            "cpp", "cc", "cxx", "hpp", "hxx" -> "cpp"
+            "cpp", "cc", "cxx", "hpp", "hxx", "m", "mm" -> "native"
             else -> ext.ifEmpty { "?" }
         }
     }
 
+    /**
+     * Same file name, and the two parent directories are siblings — `crates/a/Cargo.toml`
+     * and `crates/b/Cargo.toml`, `values/strings.xml` and `values-ja/strings.xml`. Purely
+     * structural, no per-ecosystem name list.
+     */
+    fun siblingVariants(a: String, b: String): Boolean {
+        if (a.substringAfterLast('/') != b.substringAfterLast('/')) return false
+        val parentA = a.substringBeforeLast('/', "")
+        val parentB = b.substringBeforeLast('/', "")
+        if (parentA == parentB) return false
+        return parentA.substringBeforeLast('/', "") == parentB.substringBeforeLast('/', "")
+    }
+
+    /**
+     * What it would cost to act on this coupling, and an honest name for what it is.
+     *
+     * Decided from the two endpoints' own categories, then — only when both are source —
+     * from their languages. Reading extensions first was the source of a long line of
+     * false descriptions: `config/app.yaml` × `src/App.kt` is not "a platform boundary
+     * expensive to break", and `pyproject.toml` × `app.py` is not two languages meeting.
+     * A language difference only means something when both sides are code.
+     *
+     * [category] is the PAIR's category, which `categoryOfPair` takes from the least
+     * source-like side, so it cannot stand in for either endpoint.
+     */
     fun of(a: String, b: String, category: String, namesRelated: Boolean): Estimate {
-        val ka = langKey(a)
-        val kb = langKey(b)
+        val ca = FileCategory.of(a)
+        val cb = FileCategory.of(b)
+        fun bothAre(c: String) = ca == c && cb == c
+        fun eitherIs(c: String) = ca == c || cb == c
+        // "Code" is narrower than FileCategory.SOURCE, which is its default bucket: a
+        // localized strings.xml lands in SOURCE but is a resource, and calling a pair of
+        // translations "parallel implementations, check for duplicated logic" was exactly
+        // the false positive the variant-set rule exists to prevent. FileRole knows.
+        // Code is anything in the SOURCE category that isn't a resource, a lockfile or
+        // generated output. A TEST file is code — narrowing this to FileRole.SOURCE
+        // described `list_test.go` as "configuration or a resource rather than code".
+        fun isCode(path: String, category: String) = category == FileCategory.SOURCE &&
+            FileRole.of(path) !in setOf(FileRole.RESOURCE, FileRole.LOCKFILE, FileRole.GENERATED)
+        val eitherIsLockfile = FileRole.of(a) == FileRole.LOCKFILE || FileRole.of(b) == FileRole.LOCKFILE
+        val aIsCode = isCode(a, ca)
+        val bIsCode = isCode(b, cb)
+        val bothSource = aIsCode && bIsCode
         return when {
             category == FileCategory.GENERATED -> Estimate(
                 "generated", "none",
                 "one side is generated — the coupling is inherent; fixing the source regenerates it, so this is not a refactoring target.",
             )
-            // Different language keys → cross-language. Checked before companion:
-            // two platform-parallel files often share a name (Screen.kt / Screen.swift),
-            // but that is the expensive cross-platform coupling, not a cheap companion.
-            // Unknown extensions compare by their raw extension, so an unrecognized
-            // language pair (e.g. Foo.kt / Foo.php) is not understated as low effort.
-            ka != kb -> Estimate(
+            // A lockfile is a resolved snapshot, not a definition that declares anything.
+            // Checked before every category rule: `package-lock.json` is categorised BUILD,
+            // so the build rule claimed "both files are build definitions", and a
+            // docs/lockfile pair came out as documentation maintenance.
+            eitherIsLockfile -> Estimate(
+                "lockfile", "none",
+                "one side is a dependency lockfile — a resolved snapshot the package manager rewrites, not something anyone edits by design. The coupling is the dependency update itself.",
+            )
+            // A variant set is DECLARATIVE files sharing one name under sibling
+            // directories: per-crate Cargo.toml bumped by one release, per-locale
+            // strings.xml translated together. Neither side may be source.
+            siblingVariants(a, b) && !aIsCode && !bIsCode -> Estimate(
+                "variant-set", "none",
+                "the same file name under sibling directories, declarative on both sides — a variant or lockstep set (coordinated version bumps, translations, per-target manifests). The coupling is the process, not an architectural boundary problem.",
+            )
+            // Same name, sibling directories, source on BOTH sides: one shape implemented
+            // once per feature or service, so possibly duplicated logic.
+            siblingVariants(a, b) && bothSource -> Estimate(
+                "parallel-implementation", "medium",
+                "the same file name under sibling directories, source on both sides — one shape implemented once per feature or service. Check for duplicated logic that belongs in a shared place, rather than assuming the coupling is expected.",
+            )
+            eitherIs(FileCategory.DOCS) -> Estimate(
+                "documentation", "low",
+                "one side is documentation — a changelog or a README moving with the code it describes is documentation maintenance, not a design coupling. Worth knowing which docs a module drags along; not a refactoring target.",
+            )
+            bothAre(FileCategory.BUILD) -> Estimate(
+                "build-wiring", "low",
+                "both files are build definitions — adding a dependency or bumping a version routinely touches several of them at once. Still worth reading as a boundary signal, but cheap to act on and partly inherent to the build system.",
+            )
+            eitherIs(FileCategory.BUILD) && (aIsCode || bIsCode) -> Estimate(
+                "manifest-and-source", "low",
+                "one side is a build definition and the other the code it declares — a dependency or entry point registered alongside its implementation. Cheap to act on; not a cross-platform design coupling.",
+            )
+            // Neither side is code: two declarations kept in step (a config and the CI
+            // file beside it, a manifest and a deployment descriptor).
+            !aIsCode && !bIsCode -> Estimate(
+                "declarative-pair", "low",
+                "neither side is code — two declarations kept in step, such as a config file and the deployment or CI descriptor beside it. Cheap to act on, and not a design coupling across languages even when the file types differ.",
+            )
+            // One declaration, one implementation.
+            !bothSource -> Estimate(
+                "declaration-and-code", "low",
+                "one side is configuration or a resource rather than code — a setting or asset declared next to whatever consumes it. Cheap to act on, and not a design coupling across languages even when the file types differ.",
+            )
+            // From here both sides ARE code, so a language difference is a real platform
+            // boundary. Before companion: two platform-parallel files often share a name
+            // (Screen.kt / Screen.swift), which is the expensive coupling, not a cheap
+            // companion. Unknown extensions compare by their raw extension, so an
+            // unrecognized pair (Foo.kt / Foo.php) is not understated.
+            // Only when BOTH sides carry a language. A file with none is not a platform
+            // away from anything, and claiming otherwise sends a reader to deprioritize a
+            // coupling that is trivially cheap.
+            langKeyOrNull(a) == null || langKeyOrNull(b) == null -> Estimate(
+                "unclassified", "medium",
+                "one side has no language to compare (no extension, or a dotfile) — this is not a cross-platform coupling, but it is not obviously cheap either; read the two files before deciding.",
+            )
+            langKey(a) != langKey(b) -> Estimate(
                 "cross-language", "high",
-                "the two files are in different languages ($ka vs $kb) — a design coupling across a platform boundary is expensive to break; weigh it against the impact before committing.",
+                "both sides are code, in different languages (${langKey(a)} vs ${langKey(b)}) — a design coupling across a platform boundary is expensive to break; weigh it against the impact before committing.",
             )
             namesRelated -> Estimate(
                 "companion", "low",
@@ -129,13 +241,19 @@ class BoundaryMismatchDetector(
         val boundaries = context.boundaries
         val candidates = context.pairs(minTogether = minSupport)
             .filter { context.isVisible(it.a) && context.isVisible(it.b) }
+            // Both endpoints must sit in a module the repository declares. Without
+            // this the claim degrades into "these two files are in different
+            // top-level folders", which is not a boundary at all — and a repo-wide
+            // coverage threshold cannot tell the difference, because coverage is a
+            // file population and this claim is about two specific files.
+            .filter { context.moduleIsDeclared(it.a) && context.moduleIsDeclared(it.b) }
             .filter { boundaries.moduleOf(it.a) != boundaries.moduleOf(it.b) }
             .filter { it.confidence >= minConfidence }
-            // Rank by architectural interest, not raw strength: a surprising
-            // cross-module coupling with unrelated names and solid evidence beats
-            // an expected companion pair or a small-sample fluke. (All pairs here
-            // already cross a module boundary, so distance = 1.0.)
-            .sortedByDescending { Surprise.interest(it, architecturalDistance = 1.0) }
+            // Rank by architectural interest, not raw strength: between two pairs
+            // with comparable evidence, the one whose names did not already predict
+            // the coupling comes first. Both inputs are published per finding, so a
+            // consumer that disagrees with this weighting can re-sort.
+            .sortedByDescending { Surprise.interest(it) }
             .toList()
             // Rank per category so build files, docs, and generated code, which
             // always co-change, can't crowd production-code findings out of the list.
@@ -172,10 +290,28 @@ class BoundaryMismatchDetector(
                     "(${pct(reverse)}) — the coupling is one-directional, so ${name(other)} may simply be a widely shared file."
             )
             if (rarerCount < 10) add("Only $rarerCount changes to ${name(rarer)} in the analyzed period — small sample.")
-            if (namesRelated(p.a, p.b)) add(
-                "The file names look like an interface/implementation or companion pair — this coupling is expected " +
-                    "and carries less architectural surprise than coupling between unrelated names."
-            )
+            // Derived from the coupling kind, so the counter-signal can never contradict
+            // it: a variant set was being told it "looks like an interface/implementation
+            // pair", and a parallel implementation that the coupling was "expected".
+            when (coupling.kind) {
+                "variant-set" -> add(
+                    "Same file name under sibling directories (${p.a.substringAfterLast('/')}), declarative on both " +
+                        "sides — a variant or lockstep set. Coordinated version bumps, translations and per-target " +
+                        "manifests move together by process, so crossing a module boundary here is expected."
+                )
+                "parallel-implementation" -> add(
+                    "Same file name under sibling directories, code on both sides — this may be one shape " +
+                        "implemented per feature rather than a boundary problem. Read both files before proposing a move."
+                )
+                "companion" -> add(
+                    "The file names look like an interface/implementation or companion pair — this coupling is " +
+                        "expected and carries less architectural surprise than coupling between unrelated names."
+                )
+                "lockfile", "generated" -> add(
+                    "One side is not hand-edited (${coupling.kind}), so the coupling reflects a regeneration step " +
+                        "rather than a design decision."
+                )
+            }
         }
         return Finding(
             id = "",
@@ -186,13 +322,16 @@ class BoundaryMismatchDetector(
             confidence = round2(confidence),
             impact = if (confidence >= 0.8 && reverse >= 0.3 && p.together >= 10 && !namesRelated(p.a, p.b)) "high" else "medium",
             files = listOf(p.a, p.b),
+            subjects = listOf(p.a, p.b),
             evidence = FindingEvidence(
                 support = p.together,
                 sampleSize = rarerCount,
                 sampleMeaning = "change units touching ${name(rarer)}, the rarer of the two files",
                 ratio = round2(confidence),
                 evidenceStrength = round2(Surprise.evidenceStrength(p.together, p.countA, p.countB)),
-                interest = round2(Surprise.interest(p, architecturalDistance = 1.0)),
+            ),
+            ranking = FindingRanking(
+                interest = round2(Surprise.interest(p)),
                 nameSimilarity = round2(Surprise.nameSimilarity(p.a, p.b)),
             ),
             effort = coupling.effort,
@@ -240,26 +379,20 @@ class UnstableHubDetector(
 
     override fun detect(context: AnalysisContext): List<Finding> {
         // Only multi-file changes: a hub is a file dragged into *other* work.
-        val multiFileChanges = context.changes.filter { it.files.size >= 2 }
+        // The predicate lives on AnalysisContext so `metrics` reads exactly the same
+        // population — the two used to diverge while claiming to agree.
+        val stats = context.hubStats
+        val multiFileChanges = stats.multiFileChanges
         if (multiFileChanges.isEmpty()) return emptyList()
-        val boundaries = context.boundaries
+        val participation = stats.participation
+        val partnerModules = stats.partnerModules
 
-        val participation = HashMap<String, Int>()
-        val partnerModules = HashMap<String, MutableSet<String>>()
-        for (change in multiFileChanges) {
-            val modules = change.files.map(boundaries::moduleOf).toSet()
-            for (file in change.files) {
-                participation.merge(file, 1, Int::plus)
-                partnerModules.getOrPut(file) { HashSet() }.addAll(modules - boundaries.moduleOf(file))
-            }
-        }
-
-        return participation.asSequence()
-            .filter { (file, count) ->
-                context.isVisible(file) && count >= minParticipation &&
-                    (partnerModules[file]?.size ?: 0) >= minModuleSpread
-            }
-            .sortedByDescending { (file, count) -> count.toLong() * partnerModules[file]!!.size }
+        return context.hubFiles(minParticipation, minModuleSpread).asSequence()
+            // The predicate is unfiltered so rates stay stable; a hidden role is dropped
+            // here, where we are choosing what to SHOW.
+            .filter { context.isVisible(it) }
+            .map { it to participation.getValue(it) }
+            .sortedByDescending { (file, count) -> count.toLong() * partnerModules.getValue(file).size }
             .toList()
             // Cap per category (like boundary_mismatch) so generated/build/docs hubs
             // can't consume every slot and push source hubs out of the top findings.
@@ -269,7 +402,7 @@ class UnstableHubDetector(
             }
             .map { (file, count) ->
                 val rate = count.toDouble() / multiFileChanges.size
-                val modules = partnerModules[file]!!.size
+                val modules = partnerModules.getValue(file).size
                 Finding(
                     id = "",
                     type = type,
@@ -282,11 +415,19 @@ class UnstableHubDetector(
                     confidence = round2(rate),
                     impact = if (rate >= 0.05) "high" else "medium",
                     files = listOf(file),
+                    subjects = listOf(file),
                     evidence = FindingEvidence(
                         support = count,
                         sampleSize = multiFileChanges.size,
                         sampleMeaning = "change units touching more than one file",
                         ratio = round2(rate),
+                        // Same sample correction as a pair's, over this type's own
+                        // denominator, so the guide's "prefer evidenceStrength over the
+                        // raw ratio" is followable here too. Comparable between hubs,
+                        // not across finding types.
+                        evidenceStrength = round2(
+                            ln(1.0 + count) * Surprise.wilsonLower(count, multiFileChanges.size)
+                        ),
                     ),
                     detail = FindingDetail(
                         observation = "$file was part of $count of ${multiFileChanges.size} multi-file changes " +
@@ -300,7 +441,8 @@ class UnstableHubDetector(
                             "Registration points (DI modules, navigation graphs, string resources) legitimately change with many features; the question is whether the churn is additive-only or structural.",
                         ),
                         supportingChanges = multiFileChanges.asSequence()
-                            .filter { file in it.files }.take(10).map { it.hashes.first() }.toList(),
+                            .filter { file in it.files }.take(10)
+                            .map { SupportingChange(it.hashes, listOf(file)) }.toList(),
                         metrics = mapOf(
                             "participation" to count.toString(),
                             "multiFileChanges" to multiFileChanges.size.toString(),

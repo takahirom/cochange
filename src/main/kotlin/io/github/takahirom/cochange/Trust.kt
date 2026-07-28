@@ -7,8 +7,11 @@ import kotlinx.serialization.Serializable
  * different kinds of statement, and reading them all as equally solid is the
  * fastest way to act on a false positive:
  *
- * - [EVIDENCE] — counted directly from commits: which files appeared in the
- *   same change, how often. Wrong only if the history was read wrong.
+ * - [EVIDENCE] — counted directly from the history: which files appeared in the
+ *   same change unit, how often. Wrong only if the history was read wrong. Note the
+ *   grouping into change units is itself [DERIVED] and is reported alongside: under
+ *   `author-window`, `together=1` can mean two commits ten minutes apart, not one
+ *   commit containing both files.
  * - [DERIVED] — structure inferred from the repository: modules, categories,
  *   roles, clusters, change units. Best-effort, and each carries provenance.
  * - [INTERPRETATION] — what a coupling might mean and what it might cost:
@@ -35,6 +38,13 @@ data class ModuleDetectionReport(
     val methods: List<String>,
     val coverage: Double,
     val moduleCount: Int,
+    /**
+     * Modules backed by a declared root. Two of these are what a boundary claim needs.
+     * Defaulted because this report is persisted inside a saved snapshot, and an additive
+     * field must not stop an older one from deserializing. -1 marks "this snapshot predates
+     * the field" rather than pretending the count was zero.
+     */
+    val declaredModuleCount: Int = -1,
     val declaredFiles: Int,
     val fallbackFiles: Int,
     val totalFiles: Int,
@@ -47,12 +57,21 @@ data class ModuleDetectionReport(
 )
 
 /**
- * Decides whether this repository's module detection is good enough to base
- * findings on. Raw evidence (pair counts, clusters, metrics) is never gated —
- * only the findings that assert something *about module boundaries*.
+ * Decides whether module-comparing findings are possible in this repository at
+ * all, and describes how trustworthy the detection is. Raw evidence (pair counts,
+ * clusters, metrics) is never gated — only findings that assert something *about
+ * module boundaries*.
+ *
+ * Eligibility is deliberately NOT a repository-wide coverage threshold. Coverage
+ * is a file population, while a finding's claim concerns two particular files: a
+ * 50%-coverage repo would have admitted a pair whose two endpoints were both
+ * guessed folders, and withheld a pair whose endpoints were both declared. So the
+ * repo-level question is only "are there at least two *declared* modules for
+ * anything to cross", and each finding then checks the provenance of its own
+ * endpoints via [AnalysisContext.moduleIsDeclared].
  */
 object ModuleGate {
-    /** Below this share of files resolved from a declared boundary, module findings are withheld. */
+    /** Below this share of declared coverage, [trust] is reported as `guessed`. */
     const val MIN_COVERAGE = 0.5
 
     /** At or above this share, detection is treated as reliable with no caveat. */
@@ -63,37 +82,45 @@ object ModuleGate {
     const val GUESSED = "guessed"
 
     fun report(detection: ModuleDetection): ModuleDetectionReport {
-        val coverage = detection.coverage
+        // Round once, then use that everywhere. Formatting the raw value in the note while
+        // publishing the rounded one printed the same number as "83%" and "84%" in two
+        // lines of the same output, which reads as a bug.
+        val coverage = round2(detection.coverage)
         val fallback = detection.totalFiles - detection.declaredFiles
         val hint = "pass --module-root '<glob>' to declare the boundaries of this repository's layout"
         val hintSentence = hint.replaceFirstChar { it.uppercase() } + "."
-        // Trust describes provenance quality; enablement additionally requires that
-        // there be more than one module for a boundary to be crossed at all. The two
-        // are separate: a clean single-module repo has perfect provenance and still
-        // has nothing for a boundary finding to say.
+        // Trust describes provenance quality across the repository. Eligibility is a
+        // separate, narrower question: are there two declared modules for a boundary
+        // to exist between. A clean single-module repo has perfect provenance and
+        // still has nothing for a boundary finding to say.
         val trust = when {
             coverage >= GOOD_COVERAGE -> DECLARED
             coverage >= MIN_COVERAGE -> PARTIAL
             else -> GUESSED
         }
+        val enabled = detection.declaredModuleCount >= 2
         val note = when {
-            detection.moduleCount < 2 ->
-                "Only one module was resolved, so no pair can cross a module boundary. " +
-                    "If this repository does have modules cochange didn't detect, $hint."
-            trust == GUESSED ->
-                "Only ${pct(coverage)} of files sit under a declared module root; the rest were bucketed by " +
-                    "top-level directory name, which is a guess, not a boundary. Module-comparing findings are " +
-                    "withheld rather than guessed. $hintSentence"
-            trust == PARTIAL ->
-                "${pct(coverage)} of files sit under a declared module root; $fallback fell back to a top-level " +
-                    "directory name, so some \"different modules\" claims may just be different folders. $hintSentence"
-            else -> "${pct(coverage)} of files resolve to a module root the repository itself declares."
+            !enabled && detection.declaredFiles == 0 ->
+                "No module root was detected at all, so every \"module\" here is a top-level directory name — " +
+                    "a guess, not a boundary. Module-comparing findings are withheld rather than guessed. $hintSentence"
+            !enabled ->
+                "Only ${detection.declaredModuleCount} module was declared by the repository itself, so no pair can " +
+                    "cross a boundary cochange can vouch for. If this repository does have modules cochange didn't " +
+                    "detect, $hint."
+            trust == DECLARED ->
+                "${pct(coverage)} of files resolve to a module root the repository itself declares, across " +
+                    "${detection.declaredModuleCount} declared modules."
+            else ->
+                "${pct(coverage)} of files sit under a declared module root (${detection.declaredModuleCount} declared " +
+                    "modules); $fallback fell back to a top-level directory name. Findings are reported only for files " +
+                    "on both sides of a declared boundary — a pair resting on a guessed folder is withheld " +
+                    "individually, not counted here. $hintSentence"
         }
-        val enabled = trust != GUESSED && detection.moduleCount >= 2
         return ModuleDetectionReport(
             methods = detection.methods.map { it.label },
             coverage = round2(coverage),
             moduleCount = detection.moduleCount,
+            declaredModuleCount = detection.declaredModuleCount,
             declaredFiles = detection.declaredFiles,
             fallbackFiles = fallback,
             totalFiles = detection.totalFiles,
@@ -104,9 +131,43 @@ object ModuleGate {
     }
 }
 
+/**
+ * A condition that makes the run's numbers less trustworthy. Carried in every
+ * output, including `--json`: a machine consumer has no banner to read, and
+ * "found nothing" and "was given a window over nothing" must not look alike.
+ */
+@Serializable
+data class AnalysisWarning(
+    /** Stable identifier to branch on; the prose in [message] may be reworded. */
+    val code: String,
+    /** warning | note — a warning means do not quote these numbers until it is resolved. */
+    val severity: String,
+    val message: String,
+    /**
+     * Which part of the run this is about, when a command sets up more than one —
+     * `compare` reports "baseline" and "recent". Empty when there is only one setup.
+     * A structured field, because two malformed windows produce the same [code] and
+     * a prose prefix is not something a consumer can branch on.
+     */
+    val scope: String = "",
+) {
+    companion object {
+        const val WINDOW_IS_NOW = "window_is_now"
+        const val FEW_CHANGE_UNITS = "few_change_units"
+        const val COARSE_GROUPING = "coarse_grouping"
+        const val NO_WINDOW = "no_window"
+        const val SHALLOW_CLONE = "shallow_clone"
+        const val MODULE_DETECTION = "module_detection"
+
+        const val WARNING = "warning"
+        const val NOTE = "note"
+    }
+}
+
 /** A detector that did not run, and why — so a missing finding type is never read as "nothing found". */
 @Serializable
 data class SkippedDetector(
     val type: String,
     val reason: String,
+    val tier: String = EvidenceTier.DERIVED,
 )

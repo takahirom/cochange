@@ -1,5 +1,6 @@
 package io.github.takahirom.cochange
 
+import com.github.ajalt.clikt.testing.test
 import java.io.File
 import kotlin.test.AfterTest
 import kotlin.test.Test
@@ -42,10 +43,45 @@ class PinnedConditionsTest {
         initRepo()
         // git does not reject a bad date: it falls back to "now", so `--since "las year"`
         // quietly analyzes nothing. Pinning makes that visible instead of invisible.
+        val now = java.time.Instant.now()
         val resolved = GitLog.resolveSince(repo, "las year")
         assertNotNull(resolved)
-        assertTrue(Analysis.windowLooksUnparsed(resolved), "a window resolving to ~now means git didn't understand it")
-        assertTrue(!Analysis.windowLooksUnparsed(GitLog.resolveSince(repo, "1 year ago")!!))
+        assertTrue(Analysis.windowLooksUnparsed(resolved, now), "a window resolving to now means git didn't understand it")
+        assertTrue(!Analysis.windowLooksUnparsed(GitLog.resolveSince(repo, "1 year ago")!!, now))
+        // The reference instant is the moment of resolution, not "now" at check time:
+        // a setup that took minutes must not make a malformed date look valid.
+        assertTrue(
+            Analysis.windowLooksUnparsed(resolved, now.plus(java.time.Duration.ofMinutes(10))).not(),
+            "a later reference is a different question; callers must pass the resolution instant",
+        )
+    }
+
+    /**
+     * The banner is suppressed under `--json`, so a broken window used to produce a
+     * clean-looking empty analysis. An agent reads "no findings", not "invalid input".
+     */
+    @Test
+    fun `a window over nothing is a warning in the JSON, not just in the banner`() {
+        initRepo()
+        val result = Analyze().test(listOf(repo.path, "--since", "las year", "--json"))
+        assertEquals(0, result.statusCode, result.output)
+        val parsed = json.decodeFromString(AnalysisResult.serializer(), result.stdout)
+        val warning = parsed.warnings.singleOrNull { it.code == AnalysisWarning.WINDOW_IS_NOW }
+        assertNotNull(warning, "warnings were ${parsed.warnings.map { it.code }}")
+        assertEquals(AnalysisWarning.WARNING, warning.severity)
+        assertTrue(parsed.findings.isEmpty(), "sanity: this window really does select nothing")
+    }
+
+    @Test
+    fun `a valid window carries no window warning`() {
+        initRepo()
+        val result = Analyze().test(listOf(repo.path, "--since", "1 year ago", "--json"))
+        assertEquals(0, result.statusCode, result.output)
+        val parsed = json.decodeFromString(AnalysisResult.serializer(), result.stdout)
+        assertTrue(
+            parsed.warnings.none { it.code == AnalysisWarning.WINDOW_IS_NOW },
+            "warnings were ${parsed.warnings.map { it.code }}",
+        )
     }
 
     @Test
@@ -72,5 +108,127 @@ class PinnedConditionsTest {
         assertEquals(first.changes.size, replay.changes.size)
         assertEquals(first.headCommit, replay.headCommit)
         assertTrue("later.kt" !in replay.context.headFiles, "the pinned commit predates later.kt")
+    }
+
+    private companion object {
+        val json = kotlinx.serialization.json.Json { ignoreUnknownKeys = true }
+    }
+
+}
+
+/**
+ * A finding is usually read through `inspect`, one at a time. If the run's caveats stop
+ * at `analyze`, an agent inspecting finding-1 has no way to learn that the window it
+ * came from selected nothing.
+ */
+class InspectWarningsTest {
+    private val repo = File.createTempFile("cochange-inspect-warn", "").apply { delete(); mkdirs() }
+
+    @AfterTest
+    fun cleanup() {
+        repo.deleteRecursively()
+    }
+
+    private fun git(vararg args: String) = GitLog.runGit(repo, args.toList())
+
+    @Test
+    fun `inspect carries the warnings of the run it replays`() {
+        git("init", "-q", "-b", "main")
+        git("config", "user.email", "t@example.com")
+        git("config", "user.name", "T")
+        // Two declared modules with a strong coupling, so there is a finding to inspect.
+        for (i in 1..8) {
+            File(repo, "app/build.gradle.kts").apply { parentFile.mkdirs() }.writeText("// app")
+            File(repo, "core/build.gradle.kts").apply { parentFile.mkdirs() }.writeText("// core")
+            File(repo, "app/A.kt").writeText("a$i\n")
+            File(repo, "core/B.kt").writeText("b$i\n")
+            git("add", "-A")
+            git("-c", "commit.gpgsign=false", "commit", "-q", "-m", "change $i")
+        }
+        // No --since at all: a note, not a warning, but it must still travel.
+        // One commit per unit: the commits here are instantaneous, so author-window
+        // grouping would collapse all eight into one and there would be no finding.
+        val analyze = Analyze().test(listOf(repo.path, "--change-unit", "commit", "--save", "w"))
+        assertEquals(0, analyze.statusCode, analyze.output)
+        val inspect = Inspect().test(listOf("finding-1", repo.path, "--analysis", "w"))
+        assertEquals(0, inspect.statusCode, inspect.output)
+        val report = json.decodeFromString(InspectReport.serializer(), inspect.stdout)
+        assertTrue(
+            report.warnings.any { it.code == AnalysisWarning.NO_WINDOW },
+            "inspect must repeat the run's caveats: ${report.warnings.map { it.code }}",
+        )
+    }
+
+    private companion object {
+        val json = kotlinx.serialization.json.Json { ignoreUnknownKeys = true }
+    }
+}
+
+/**
+ * "No findings" has several very different causes. Running cochange on its own young,
+ * single-module repository produced a bare "try lowering --min-support", which is the
+ * right advice for only one of them — and said nothing about the fact that a finding
+ * would have had to rest on half of the entire history.
+ */
+class EmptyResultHonestyTest {
+    private val repo = File.createTempFile("cochange-empty", "").apply { delete(); mkdirs() }
+
+    @AfterTest
+    fun cleanup() {
+        repo.deleteRecursively()
+    }
+
+    private fun git(vararg args: String) = GitLog.runGit(repo, args.toList())
+
+    private fun commitBursts(count: Int) {
+        git("init", "-q", "-b", "main")
+        git("config", "user.email", "t@example.com")
+        git("config", "user.name", "T")
+        File(repo, "build.gradle.kts").writeText("// root")
+        for (i in 1..count) {
+            File(repo, "src/A.kt").apply { parentFile.mkdirs() }.writeText("a$i\n")
+            File(repo, "src/B.kt").writeText("b$i\n")
+            git("add", "-A")
+            git("-c", "commit.gpgsign=false", "commit", "-q", "-m", "change $i")
+        }
+    }
+
+    @Test
+    fun `a tiny sample is reported as a sample problem, not a threshold problem`() {
+        commitBursts(6)
+        val result = Analyze().test(listOf(repo.path, "--change-unit", "commit", "--save", "e", "--json"))
+        assertEquals(0, result.statusCode, result.output)
+        val parsed = json.decodeFromString(AnalysisResult.serializer(), result.stdout)
+        val warning = parsed.warnings.single { it.code == AnalysisWarning.FEW_CHANGE_UNITS }
+        assertEquals(AnalysisWarning.WARNING, warning.severity)
+        assertTrue("of the whole analyzed history" in warning.message, warning.message)
+        assertTrue("not enough independent changes" in warning.message, warning.message)
+    }
+
+    @Test
+    fun `withheld detectors are named instead of being read as a clean repository`() {
+        commitBursts(6)
+        val analyze = Analyze().test(listOf(repo.path, "--change-unit", "commit", "--save", "e"))
+        assertEquals(0, analyze.statusCode, analyze.output)
+        assertTrue(analyze.output.contains("were withheld"), analyze.output)
+        assertTrue(
+            analyze.output.contains("Raw evidence is unaffected"),
+            "the gate never touches pairs/clusters, so say where to look: ${analyze.output}",
+        )
+    }
+
+    @Test
+    fun `a large sample carries no sample warning`() {
+        commitBursts(40)
+        val result = Analyze().test(listOf(repo.path, "--change-unit", "commit", "--save", "e2", "--json"))
+        val parsed = json.decodeFromString(AnalysisResult.serializer(), result.stdout)
+        assertTrue(
+            parsed.warnings.none { it.code == AnalysisWarning.FEW_CHANGE_UNITS },
+            "warnings were ${parsed.warnings.map { it.code }}",
+        )
+    }
+
+    private companion object {
+        val json = kotlinx.serialization.json.Json { ignoreUnknownKeys = true }
     }
 }

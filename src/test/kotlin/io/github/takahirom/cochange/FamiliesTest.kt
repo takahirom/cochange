@@ -53,3 +53,82 @@ class FamiliesTest {
         assertTrue(Families.detect(ctx, ctx.boundaries).isEmpty())
     }
 }
+
+/**
+ * Family collapsing removes edges, so it must rest on a declared module. Under guessed
+ * boundaries every sibling service directory shares one top-level "module", which made
+ * two independent services' config files look like one variant set.
+ */
+class FamilyProvenanceTest {
+    private var t = 0L
+    private fun commit(vararg files: String): Commit {
+        t += 3600 * 24
+        return Commit("h$t", "dev", t, "m", files.toList())
+    }
+
+    private fun families(head: Set<String>): List<Families.Family> {
+        val changes = List(8) { LogicalChange(listOf(commit("services/orders/config.yml", "services/payments/config.yml"))) }
+        val boundaries = Boundaries(head)
+        return Families.detect(AnalysisContext(changes, boundaries, head), boundaries)
+    }
+
+    @Test
+    fun `a guessed module is not enough to collapse a family`() {
+        val head = setOf("services/orders/config.yml", "services/payments/config.yml")
+        assertTrue(
+            families(head).isEmpty(),
+            "both files resolve to the guessed module 'services'; collapsing would delete a real edge",
+        )
+    }
+
+    @Test
+    fun `a declared module still collapses its variant set`() {
+        val head = setOf(
+            "build.gradle.kts",
+            "services/orders/config.yml", "services/payments/config.yml",
+        )
+        val detected = families(head)
+        assertTrue(detected.isNotEmpty(), "one declared root module covers both, so the family stands")
+        assertEquals(2, detected.single().members.size)
+    }
+}
+
+/**
+ * `Families.project` aliases every non-representative member to the representative, so
+ * those paths leave the projected context's `headFiles`. Asking the PROJECTED context
+ * whether a sibling is visible therefore answered "hidden" for all of them, even with no
+ * `--exclude-role` — the sibling list came back empty and claimed they were role-filtered.
+ */
+class FamilyVisibilityContextTest {
+    private var t = 0L
+    private fun commit(vararg files: String): Commit {
+        t += 3600 * 24
+        return Commit("h$t", "dev", t, "m", files.toList())
+    }
+
+    @Test
+    fun `a projected context must not be asked whether a family sibling is visible`() {
+        val head = setOf(
+            "build.gradle.kts",
+            "app/res/values/strings.xml", "app/res/values-ja/strings.xml", "app/Screen.kt",
+        )
+        val changes = List(8) {
+            LogicalChange(listOf(commit("app/res/values/strings.xml", "app/res/values-ja/strings.xml", "app/Screen.kt")))
+        }
+        val boundaries = Boundaries(head)
+        val raw = AnalysisContext(changes, boundaries, head)
+        val families = Families.detect(raw, boundaries)
+        assertTrue(families.isNotEmpty(), "the two locale files move as a set")
+
+        val projected = Families.project(raw, boundaries, families)
+        val member = families.single().members.single { it != families.single().representative }
+        assertTrue(
+            !projected.isVisible(member),
+            "the projection aliased it away, which is exactly why the projected context cannot answer this",
+        )
+        assertTrue(
+            raw.isVisible(member),
+            "nothing was excluded, so the unprojected context is the one that gives the right answer",
+        )
+    }
+}

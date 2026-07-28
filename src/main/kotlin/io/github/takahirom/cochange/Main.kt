@@ -1,6 +1,7 @@
 package io.github.takahirom.cochange
 
 import com.github.ajalt.clikt.core.CliktCommand
+import com.github.ajalt.clikt.core.CliktError
 import com.github.ajalt.clikt.core.subcommands
 import com.github.ajalt.clikt.parameters.arguments.argument
 import com.github.ajalt.clikt.parameters.arguments.default
@@ -80,6 +81,25 @@ class Analyze : CliktCommand(
         val changes = setup.changes
         val run = Analyzer(minSupport, minConfidence).run(setup.context)
 
+        // A support-N finding drawn from very few change units would have to rest on a
+        // large share of the entire analyzed history. Report the ratio rather than a bar:
+        // it is what tells a reader whether "no findings" means "clean" or "no sample".
+        val sampleWarning = if (changes.isNotEmpty() && changes.size < minSupport * 4) {
+            val reach = if (minSupport > changes.size) {
+                "--min-support $minSupport is unreachable: no coupling can appear in more units than exist, " +
+                    "so no pair finding is possible at all"
+            } else {
+                "a finding at --min-support $minSupport would rest on " +
+                    "${pct(minSupport.toDouble() / changes.size)} of the whole analyzed history"
+            }
+            listOf(AnalysisWarning(
+                AnalysisWarning.FEW_CHANGE_UNITS, "warning",
+                "Only ${changes.size} change units in this window, so $reach. Read \"no findings\" as " +
+                    "\"not enough independent changes to say\", not as \"nothing to fix\" — " +
+                    "see: cochange guide small-repo.",
+            ))
+        } else emptyList()
+
         val result = AnalysisResult(
             schemaVersion = SCHEMA_VERSION,
             repo = repo.path,
@@ -95,6 +115,7 @@ class Analyze : CliktCommand(
             moduleDetection = run.moduleDetection,
             skippedDetectors = run.skipped,
             hiddenByRole = run.hiddenByRole,
+            warnings = setup.warnings + sampleWarning,
         )
         Store.save(repo, result, save)
 
@@ -148,7 +169,7 @@ class Pairs : CliktCommand(
     private val top by option("--top", help = "Number of pairs to show").int().restrictTo(min = 1).default(50)
     private val file by option("--file", help = "Only pairs involving a path containing this substring")
     private val category by option("--category", help = "Only pairs in this category (source, config, build, docs, generated)")
-    private val analysis by option("--analysis", help = "Reuse the conditions (window/excludes/change-unit) from a saved analysis snapshot")
+    private val analysis by option("--analysis", help = "Reuse the conditions (window/excludes/change-unit) from a saved analysis snapshot. Replaces the history options above rather than combining with them")
     private val asJson by option("--json", help = "Print the pairs as JSON, with the run's pinned conditions and provenance").flag()
 
     override fun run() {
@@ -196,7 +217,7 @@ class ClustersCommand : CliktCommand(
     private val top by option("--top", help = "Number of clusters to show").int().restrictTo(min = 1).default(10)
     private val category by option("--category", help = "Only files in this category (source, config, build, docs, generated)")
     private val show by option("--show", help = "Expand one cluster (by its number) to its full file list").int().restrictTo(min = 1)
-    private val analysis by option("--analysis", help = "Reuse the conditions (window/excludes/change-unit) from a saved analysis snapshot")
+    private val analysis by option("--analysis", help = "Reuse the conditions (window/excludes/change-unit) from a saved analysis snapshot. Replaces the history options above rather than combining with them")
     private val noCollapse by option("--no-collapse", help = "Don't collapse synchronized sibling families (e.g. strings.xml across locales) into one node").flag()
     private val asJson by option("--json", help = "Print the clusters as JSON, with full file lists, the run's pinned conditions, and provenance").flag()
 
@@ -215,8 +236,20 @@ class ClustersCommand : CliktCommand(
 
         fun label(file: String): String {
             val fam = famByRep[file] ?: return file
-            val siblings = fam.members.filter { it != file }.map { it.substringBeforeLast('/').substringAfterLast('/') }
-            return "$file (+${siblings.size} sibling${if (siblings.size == 1) "" else "s"}: ${siblings.joinToString(", ")})"
+            // Sibling directory names are paths too: an excluded role must not be named
+            // here, only counted, or the text announces what the JSON is hiding.
+            val members = fam.members.filter { it != file }
+            // setup.context, not the projected one: project() aliases every
+            // non-representative member to the representative, so those paths are no
+            // longer in the projected headFiles and would all look role-hidden.
+            val shown = members.filter(setup.context::isVisible)
+            val hidden = members.size - shown.size
+            val names = shown.map { it.substringBeforeLast('/').substringAfterLast('/') }
+            val withheld = if (hidden > 0) {
+                (if (names.isEmpty()) "" else ", ") + "$hidden hidden by --exclude-role"
+            } else ""
+            return "$file (+${members.size} sibling${if (members.size == 1) "" else "s"}: " +
+                "${names.joinToString(", ")}$withheld)"
         }
 
         if (asJson) {
@@ -232,12 +265,28 @@ class ClustersCommand : CliktCommand(
                         ClusterReport(
                             index = i + 1,
                             files = cluster.files,
+                            fileCount = cluster.fileCount,
+                            hiddenFiles = cluster.hiddenFiles,
                             modules = cluster.files.map { boundaries.moduleOf(it) }.distinct().sorted(),
+                            declaredModules = cluster.files
+                                .filter { setup.context.moduleIsDeclared(it) }
+                                .map { boundaries.moduleOf(it) }.distinct().sorted(),
+                            guessedFiles = cluster.files
+                                .filterNot { setup.context.moduleIsDeclared(it) }.sorted(),
                             strongPairs = cluster.edges.size,
                             pairSupportVolume = cluster.pairSupportVolume,
-                            strongest = cluster.edges.firstOrNull()
+                            // The strongest edge whose endpoints are both shown; an
+                            // excluded role must not be named here either.
+                            strongest = cluster.edges
+                                .firstOrNull { setup.context.isVisible(it.a) && setup.context.isVisible(it.b) }
                                 ?.let { ClusterEdgeReport(it.a, it.b, it.together, round2(it.jaccard)) },
-                            collapsedFamilies = cluster.files.mapNotNull { f -> famByRep[f]?.let { f to it.members } }.toMap(),
+                            // Members are paths, so an excluded role must not appear here
+                            // either — the family itself is unaffected by the filter.
+                            collapsedFamilies = cluster.files
+                                .mapNotNull { f ->
+                                    famByRep[f]?.let { fam -> f to fam.members.filter(setup.context::isVisible) }
+                                }
+                                .toMap(),
                         )
                     },
                 ),
@@ -253,8 +302,13 @@ class ClustersCommand : CliktCommand(
             return
         }
 
+        // The strongest VISIBLE edge: this line names two paths, so an excluded role must
+        // not appear in it. The cluster's counts above still include those edges.
+        fun strongestVisible(cluster: Clusters.Cluster) = cluster.edges
+            .firstOrNull { context.isVisible(it.a) && context.isVisible(it.b) }
+
         fun strongestOf(cluster: Clusters.Cluster): String {
-            val s = cluster.edges.first()
+            val s = strongestVisible(cluster) ?: return "(every strong pair here is hidden by --exclude-role)"
             val (la, lb) = distinguishingLabels(s.a, s.b)
             return "$la x $lb (${s.together} together, jaccard ${"%.2f".format(s.jaccard)})"
         }
@@ -267,7 +321,7 @@ class ClustersCommand : CliktCommand(
             }
             val cluster = clusters[showIdx - 1]
             echo("")
-            echo("cluster $showIdx: ${cluster.files.size} files, ${cluster.edges.size} strong pairs (pair-support volume ${cluster.pairSupportVolume})")
+            echo("cluster $showIdx: ${cluster.fileCount} files${hiddenNote(cluster)}, ${cluster.edges.size} strong pair${if (cluster.edges.size == 1) "" else "s"} (pair-support volume ${cluster.pairSupportVolume})")
             for (file in cluster.files) {
                 echo("  ${label(file)} (${context.changeCount(file)} changes, ${boundaries.moduleOf(file)})")
             }
@@ -281,12 +335,27 @@ class ClustersCommand : CliktCommand(
             val modules = cluster.files.map { boundaries.moduleOf(it) }.distinct()
             val span = if (modules.size == 1) "1 module (${modules.first()})" else "${modules.size} modules"
             echo("")
-            echo("cluster ${i + 1}: ${cluster.files.size} files across $span, ${cluster.edges.size} strong pairs (pair-support volume ${cluster.pairSupportVolume})")
+            echo("cluster ${i + 1}: ${cluster.fileCount} files${hiddenNote(cluster)} across $span, ${cluster.edges.size} strong pair${if (cluster.edges.size == 1) "" else "s"} (pair-support volume ${cluster.pairSupportVolume})")
             echo("  strongest pair: ${strongestOf(cluster)}")
         }
         echo("")
+        // Reproducing the clusters above needs the conditions they were computed under. With
+        // --analysis that is the snapshot, and emitting --since alongside it would print two
+        // conflicting sources for the same window.
+        // Every option that changes the clustering, or the command does not reproduce what
+        // was just printed. With --analysis the snapshot supplies the history conditions, so
+        // repeating them would name two sources for the same window.
         val opts = buildString {
-            history.since?.let { append(" --since \"$it\"") }
+            if (analysis != null) {
+                append(" --analysis $analysis")
+            } else {
+                history.since?.let { append(" --since \"$it\"") }
+                history.branch?.let { append(" --branch $it") }
+                if (history.changeUnit != "auto") append(" --change-unit ${history.changeUnit}")
+                history.excludeRole?.let { append(" --exclude-role ${it.joinToString(",")}") }
+                history.focus?.let { append(" --focus $it") }
+            }
+            if (noCollapse) append(" --no-collapse")
             append(" --min-support $minSupport --min-jaccard $minJaccard")
             category?.let { append(" --category $it") }
         }
@@ -301,7 +370,7 @@ class MetricsCommand : CliktCommand(
     private val path by argument(help = "Path to the Git repository").default(".")
     private val history by HistoryOptions()
     private val asJson by option("--json", help = "Machine-readable output for recording runs over time").flag()
-    private val analysis by option("--analysis", help = "Reuse the conditions (window/excludes/change-unit) from a saved analysis snapshot")
+    private val analysis by option("--analysis", help = "Reuse the conditions (window/excludes/change-unit) from a saved analysis snapshot. Replaces the history options above rather than combining with them")
 
     override fun run() {
         val repo = File(path).canonicalFile
@@ -313,16 +382,21 @@ class MetricsCommand : CliktCommand(
             return
         }
         printBanner(setup, { msg, e -> echo(msg, err = e) }, compact = true)
-        echo("window: ${"%.1f".format(m.windowYears)} years  multi-file change units: ${m.multiFileUnits}  " +
+        echo("window: ${"%.1f".format(m.windowYears)} years  multi-file change units: ${m.multiFileUnits} " +
+            "(${m.declaredMultiFileUnits} within declared modules)  " +
             "effective modules: ${"%.1f".format(m.effectiveModules)} (${m.distinctModules} distinct)")
         if (m.lowResolution) {
             echo("WARNING: low-resolution module partition (effective modules < ${Metrics.LOW_RESOLUTION}) — module-based scores below are weak evidence.", err = true)
         }
         echo("")
-        echo("module locality        ${fmt(m.moduleLocality)}  (${m.localUnits}/${m.multiFileUnits} multi-file units contained in one module)")
-        echo("  adjusted for chance  ${fmt(m.adjustedLocality)}  (contribution of the module structure beyond random placement — a monolith scores ~0 here)")
-        echo("hub-free change rate   ${fmt(m.hubFreeRate)}  (${m.hubAvoidingUnits}/${m.multiFileUnits} units avoid the ${m.hubFiles.size} hub files)" +
-            if (m.hubFreeRate == null) "  [needs >= 6 modules]" else "")
+        echo("module locality        ${fmt(m.moduleLocality)}  (${m.localUnits}/${m.declaredMultiFileUnits} declared-module units contained in one module)")
+        echo("  adjusted for chance  ${fmt(m.adjustedLocality)}  (contribution of the module structure beyond random placement; N/A when one module makes the question meaningless)")
+        // isVisible also drops files absent at HEAD, so attribute this only when a role
+        // filter is actually in play.
+        val hiddenHubs = m.hubCount - m.hubFiles.size
+        echo("hub-free change rate   ${fmt(m.hubFreeRate)}  (${m.hubAvoidingUnits}/${m.multiFileUnits} units avoid the " +
+            "${m.hubCount} hub files${if (hiddenHubs > 0) ", $hiddenHubs not listed" else ""})" +
+            if (m.hubFreeRate == null) "  [needs >= 6 declared modules in multi-file changes]" else "")
         m.hubFiles.take(3).forEach { echo("                         hub: $it") }
         echo("boundary integrity     ${fmt(m.boundaryIntegrity)}  (${m.hotspotFreeCrossUnits}/${m.crossModuleUnits} cross-module units avoid the ${m.boundaryHotspots} recurring hotspot pairs)")
         m.topHotspot?.let { p ->
@@ -331,8 +405,19 @@ class MetricsCommand : CliktCommand(
             echo("                         top hotspot: $la x $lb — ~$perYear double-edits/year")
         }
         echo("")
+        // Every score above is a function of the module partition. When that partition
+        // is directory names, "rich structure" would be a statement about folders —
+        // the same reason the module findings are withheld.
+        val modules = ModuleGate.report(setup.context.moduleDetection)
         val adjusted = m.adjustedLocality
-        if (adjusted != null) {
+        if (adjusted != null && !modules.moduleFindingsEnabled) {
+            echo(
+                "reading: withheld — these scores are computed over ${modules.declaredModuleCount} declared " +
+                    "module${if (modules.declaredModuleCount == 1) "" else "s"}, so the partition above is mostly " +
+                    "directory names. Declare roots with --module-root and re-run before reading them as structure.",
+            )
+            echo("")
+        } else if (adjusted != null) {
             val richStructure = m.effectiveModules >= 3
             val respected = adjusted >= 0.5
             val reading = when {
@@ -348,7 +433,8 @@ class MetricsCommand : CliktCommand(
             echo("reading: ${"%.1f".format(m.effectiveModules)} effective modules x ${"%.0f".format(adjusted * 100)}% adjusted locality — $reading")
             echo("")
         }
-        echo("All scores are higher-is-better shares of change units. Read module locality TOGETHER with effective modules: a coarse partition is easy to comply with, so raising structure and keeping compliance is the goal. Trend within one repository under the same options; absolute values are not comparable across repos.")
+        echo("Scores are higher-is-better. All but one are shares of change units; adjusted locality " +
+            "is chance-corrected and can go negative (below what random placement would give). Read module locality TOGETHER with effective modules: a coarse partition is easy to comply with, so raising structure and keeping compliance is the goal. Trend within one repository under the same options; absolute values are not comparable across repos.")
     }
 
     private fun fmt(v: Double?) = if (v == null) "  N/A" else "%5.1f%%".format(v * 100)
@@ -370,6 +456,15 @@ class CompareCommand : CliktCommand(
     override fun run() {
         val repo = File(path).canonicalFile
         val base = history.toAnalysisOptions()
+        // --since is inherited from the shared history options but has no meaning here:
+        // this command defines its own two windows. Silently overriding it would leave an
+        // accepted argument with no effect on the answer.
+        if (base.since != null) {
+            throw CliktError(
+                "compare defines its own windows — use --baseline and --recent instead of --since " +
+                    "(--since '${base.since}' would have been ignored).",
+            )
+        }
         val baseSetup = Analysis.contextFor(repo, base.copy(since = windowSince(baseline)))
         // Both windows must be counted in the same unit. --change-unit auto resolves
         // per window, so a repo that moved from merge commits to squashes would have
@@ -392,9 +487,12 @@ class CompareCommand : CliktCommand(
             baseSetup.changeUnitName
         }
 
-        val computed = Compare.of(baseCtx, recentCtx, minCount)
+        // --category is passed in, not applied afterwards: the summary has to describe the
+        // same set the listing does, or `--category source` reports movers it does not show.
+        val computed = Compare.of(baseCtx, recentCtx, minCount) { file ->
+            category == null || recentCtx.categoryOf(file) == category || baseCtx.categoryOf(file) == category
+        }
         val moves = computed.moves
-            .filter { category == null || recentCtx.categoryOf(it.file) == category || baseCtx.categoryOf(it.file) == category }
 
         // Report the denominator the rates were actually divided by (multi-file units),
         // alongside each window's total activity — printing only the latter next to a
@@ -404,18 +502,29 @@ class CompareCommand : CliktCommand(
 
         if (asJson) {
             echo(Compare.encode(
-                repo = repo.path, branch = history.branch ?: "HEAD", shallow = baseSetup.shallow,
+                // Both setups' caveats: a malformed --recent resolves to now and every
+                // established file appears to cool to zero, which must not look clean.
+                context = RunContext.of(baseSetup).let { ctx ->
+                    ctx.copy(
+                        warnings = baseSetup.warnings.map { it.copy(scope = "baseline") } +
+                            recentSetup.warnings.map { it.copy(scope = "recent") },
+                    )
+                },
                 minCount = minCount, category = category,
                 baseline = baseWindow, recent = recentWindow,
                 comparison = computed.copy(moves = moves),
-                changeUnit = baseSetup.changeUnitName,
-                changeUnitReason = baseSetup.changeUnitReason,
                 recentWindowAloneWouldUse = recentAlone,
             ))
             return
         }
 
-        if (baseSetup.shallow) echo("WARNING: shallow clone — windows are truncated, so the comparison is biased.", err = true)
+        for ((label, setup) in listOf("baseline" to baseSetup, "recent" to recentSetup)) {
+            for (w in setup.warnings) {
+                val tag = if (w.severity == AnalysisWarning.WARNING) "WARNING" else "note"
+                echo("$tag ($label window): ${w.message}", err = true)
+            }
+        }
+        // Both windows resolve their own conditions, so a caveat belongs to one of them.
         if (recentAlone != baseSetup.changeUnitName) {
             echo(
                 "WARNING: the recent window alone would be counted as \"$recentAlone\", not " +
@@ -433,10 +542,12 @@ class CompareCommand : CliktCommand(
             echo("No files reached --min-count ($minCount) in either window. Widen the windows or lower --min-count.")
             return
         }
-        val summary = Compare.summarize(moves)
+        // Computed over every mover, so a role filter changes the listing and not the trend.
+        val summary = computed.summary
         echo("summary: ${summary.heating} heating, ${summary.cooling} cooling, " +
-            "mean shift ${"%.1f".format(summary.meanAbsShift * 100)}pp per listed file " +
-            "(${moves.size} files at --min-count $minCount)")
+            "mean shift ${"%.1f".format(summary.meanAbsShift * 100)}pp per mover " +
+            "(over ${summary.files} movers at --min-count $minCount" +
+            (if (summary.files != moves.size) "; ${moves.size} listed below" else "") + ")")
 
         fun pct(v: Double) = "%3.0f%%".format(v * 100)
         fun line(m: Compare.Move) = "  " + m.file.padEnd(52) +
@@ -486,12 +597,24 @@ class Inspect : CliktCommand(
         val repo = File(path).canonicalFile
         val result = loadOrFail(path, analysis)
         val finding = result.findings.find { it.id == id }
-            ?: error("no finding '$id' — available: ${result.findings.joinToString(", ") { it.id }}")
+            ?: throw CliktError("no finding '$id' — available: ${result.findings.joinToString(", ") { it.id }}")
         // Resolve the hashes now rather than storing subjects and churn in the cache:
         // an older snapshot benefits too, and the cache stays a cache.
-        val commits = runCatching {
-            GitLog.commitSummaries(repo, finding.detail.supportingChanges, finding.files.toSet())
-        }.getOrDefault(emptyList())
+        val findingFiles = finding.files.toSet()
+        val byHash = runCatching {
+            GitLog.commitSummaries(repo, finding.detail.supportingChanges.flatMap { it.hashes }, findingFiles)
+                .associateBy { it.hash }
+        }.getOrDefault(emptyMap())
+        val supporting = finding.detail.supportingChanges.map { unit ->
+            SupportingChangeReport(
+                hashes = unit.hashes,
+                commits = unit.hashes.mapNotNull { byHash[it] },
+                // Recorded when the analysis ran. Rebuilding it from churn was wrong for
+                // any file renamed after the commit: the log is read with -M, so the
+                // finding names the current path while the commit names the old one.
+                filesTouched = unit.filesTouched,
+            )
+        }
         val current = runCatching { GitLog.headCommit(repo, null) }.getOrNull()
         echo(reportJson.encodeToString(
             InspectReport.serializer(),
@@ -509,9 +632,10 @@ class Inspect : CliktCommand(
                 moduleDetection = result.moduleDetection,
                 skippedDetectors = result.skippedDetectors,
                 hiddenByRole = result.hiddenByRole,
+                warnings = result.warnings,
                 stale = current != null && result.headCommit.isNotEmpty() && current != result.headCommit,
                 finding = finding,
-                supportingCommits = commits,
+                supportingChanges = supporting,
             ),
         ))
     }
@@ -527,7 +651,9 @@ private fun resolveOptions(path: String, analysis: String?, history: HistoryOpti
     if (analysis == null) return history.toAnalysisOptions()
     val loaded = loadOrFail(path, analysis)
     return loaded.options
-        ?: error("analysis '$analysis' predates recorded conditions — re-run: cochange analyze $path --save $analysis")
+        ?: throw CliktError(
+            "analysis '$analysis' predates recorded conditions — re-run: cochange analyze $path --save $analysis",
+        )
 }
 
 private fun loadOrFail(path: String, analysis: String = Store.DEFAULT_NAME): AnalysisResult {
@@ -540,10 +666,10 @@ private fun loadOrFail(path: String, analysis: String = Store.DEFAULT_NAME): Ana
             analysis !in saved -> "saved analyses: ${saved.joinToString(", ")}"
             else -> "run: cochange analyze $path --save $analysis"
         }
-        error("no analysis '$analysis' for $repo — $hint")
+        throw CliktError("no analysis '$analysis' for $repo — $hint")
     }
     if (result.schemaVersion != SCHEMA_VERSION) {
-        error(
+        throw CliktError(
             "analysis '$analysis' uses schema v${result.schemaVersion}; this cochange reads v$SCHEMA_VERSION. " +
                 "Field meanings changed, so it won't be reinterpreted — re-run: cochange analyze $path" +
                 if (analysis != Store.DEFAULT_NAME) " --save $analysis" else "",
@@ -566,38 +692,39 @@ private fun printBanner(setup: AnalysisSetup, echo: (String, Boolean) -> Unit, c
     // Compact commands (clusters/metrics/pairs) also recompute from the git log, so the
     // window must stay visible here too or an unset --since silently means all history.
     out("branch: ${setup.options.branch ?: "HEAD"}  since: ${since ?: "(all history)"}")
-    if (since == null) {
-        err("note: no --since — computing over all history; pass --since (e.g. '1 year ago') to match the window used elsewhere.")
-    } else {
-        val pinned = setup.resolvedOptions.since
-        if (pinned != null && Analysis.windowLooksUnparsed(pinned)) {
-            err("WARNING: git could not read --since '$since' as a date and treated it as 'now', so almost no history was analyzed. Use a form git understands, e.g. '1 year ago' or '2025-01-01'.")
-        } else if (pinned != null && pinned != since) {
-            out("  window pinned to: $pinned")
-        }
+    val pinned = setup.resolvedOptions.since
+    if (pinned != null && pinned != since && setup.warnings.none { it.code == AnalysisWarning.WINDOW_IS_NOW }) {
+        out("  window pinned to: $pinned")
     }
-    if (setup.shallow) err("WARNING: shallow clone — history is truncated, so every ratio below is biased. Run 'git fetch --unshallow' for accurate results.")
     out("change unit: ${setup.changeUnitName} (${setup.changeUnitReason})" +
         if (compact) "; ${setup.changes.size} change units" else "")
     if (!compact && setup.changeUnitName == "author-window") {
         out("  window: ${setup.options.groupWindowMin}m same-author, max ${setup.options.maxFilesPerCommit} files/commit")
     }
-    // pairs/clusters/metrics print module names too, and a fallback name looks
-    // exactly like a real module root — say so once, up front.
-    val modules = ModuleGate.report(setup.context.moduleDetection)
-    if (modules.trust != ModuleGate.DECLARED) {
-        err("note: module detection is ${modules.trust} (${pct(modules.coverage)} of files under a declared module root) — ${modules.note}")
+    // One source for the caveats, so the banner and the JSON can never disagree
+    // about whether these numbers are quotable.
+    for (warning in setup.warnings) {
+        val label = if (warning.severity == AnalysisWarning.WARNING) "WARNING" else "note"
+        err("$label: ${warning.message}")
     }
 }
 
+/** "(N hidden by --exclude-role)" when a cluster's listing is shorter than its counts. */
+private fun hiddenNote(cluster: Clusters.Cluster): String =
+    if (cluster.hiddenFiles > 0) " (${cluster.hiddenFiles} hidden by --exclude-role)" else ""
+
 /**
- * Reports how the structure findings depend on was resolved, and whether any
- * detector was withheld because it wasn't resolved well enough. Printed before
- * the findings so the reader knows what they are trusting, and printed even
- * when there are no findings — "nothing found" and "nothing was allowed to
- * run" are different answers.
+ * Reports how the structure the findings depend on was resolved, and whether any detector
+ * was withheld because it wasn't resolved well enough. Printed before the findings so the
+ * reader knows what they are trusting, and printed even when there are no findings —
+ * "nothing found" and "nothing was allowed to run" are different answers.
  */
 private fun printTrustNotes(result: AnalysisResult, echo: (String) -> Unit) {
+    // Warnings the ANALYSIS added (not the setup, which the banner already printed):
+    // the sample-size caveat is only knowable once the thresholds are known.
+    for (w in result.warnings.filter { it.code == AnalysisWarning.FEW_CHANGE_UNITS }) {
+        echo("WARNING: ${w.message}")
+    }
     if (result.hiddenByRole.isNotEmpty()) {
         val breakdown = result.hiddenByRole.entries.sortedBy { it.key }.joinToString(", ") { "${it.key}=${it.value}" }
         echo("hidden by --exclude-role: ${result.hiddenByRole.values.sum()} files ($breakdown)")
@@ -606,7 +733,8 @@ private fun printTrustNotes(result: AnalysisResult, echo: (String) -> Unit) {
     val modules = result.moduleDetection ?: return
     echo("module detection [derived]: ${modules.methods.joinToString(", ").ifEmpty { "none — no build files or --module-root globs matched" }}")
     echo("  coverage: ${pct(modules.coverage)} of ${modules.totalFiles} files under a declared module root " +
-        "(${modules.moduleCount} module${if (modules.moduleCount == 1) "" else "s"}, trust=${modules.trust})")
+        "(${modules.moduleCount} module${if (modules.moduleCount == 1) "" else "s"}, " +
+        "${modules.declaredModuleCount} declared, trust=${modules.trust})")
     echo("  ${modules.note}")
     for (s in result.skippedDetectors) {
         echo("  WITHHELD ${s.type}: findings of this type were not produced — see above.")
@@ -617,7 +745,26 @@ private fun printTrustNotes(result: AnalysisResult, echo: (String) -> Unit) {
 private fun printFindingsSummary(result: AnalysisResult, echo: (String) -> Unit) {
     printTrustNotes(result, echo)
     if (result.findings.isEmpty()) {
-        echo("No findings above thresholds. Try lowering --min-support / --min-confidence.")
+        // "No findings" has several very different causes, and telling the reader to lower
+        // a threshold is the right advice for only one of them.
+        val withheld = result.skippedDetectors.map { it.type }
+        val ran = (result.detectorTypes.toSet() - withheld.toSet()).size
+        echo(
+            when {
+                withheld.isNotEmpty() && ran == 0 ->
+                    "No findings: every detector was withheld (${withheld.joinToString(", ")}) — see the reason above. " +
+                        "This says nothing about the repository yet."
+                withheld.isNotEmpty() ->
+                    "No findings from the detectors that ran; ${withheld.joinToString(", ")} " +
+                        "${if (withheld.size == 1) "was" else "were"} withheld (see above). " +
+                        "For what did run, try lowering --min-support / --min-confidence."
+                else ->
+                    "No findings above thresholds. Try lowering --min-support / --min-confidence, " +
+                        "or widen the window — see: cochange guide small-repo."
+            },
+        )
+        // Raw evidence is never gated, so point at what is still available.
+        echo("Raw evidence is unaffected: cochange pairs . --min-support 2  /  cochange clusters . --min-support 2")
         return
     }
     // "Review candidates", not "findings you should act on": every line below is

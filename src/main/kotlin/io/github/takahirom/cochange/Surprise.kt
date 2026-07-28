@@ -7,9 +7,13 @@ import kotlin.math.sqrt
  * Ranks a co-change pair by *architectural interest* rather than raw strength,
  * so a strong-but-boring coupling (an interface and its impl, a rarely-changed
  * pair that happened to move together a handful of times) sinks below a coupling
- * that is genuinely surprising. All signals are ecosystem-agnostic: evidence
- * reliability, whether names predict the coupling, and how far apart the files
- * sit. Interest only reorders — it never changes the underlying evidence.
+ * that is genuinely surprising. Both signals are ecosystem-agnostic: evidence
+ * reliability, and whether the names already predicted the coupling. Interest only
+ * reorders — it never changes the underlying evidence.
+ *
+ * There used to be a third input, an "architectural distance" factor. Every caller
+ * passed the constant 1.0, so it varied nothing and only made the formula look more
+ * informed than it was.
  */
 object Surprise {
     /**
@@ -50,14 +54,28 @@ object Surprise {
     }
 
     /**
-     * Interest = evidenceStrength × (0.5 + distance) × (1 − 0.75 × nameSimilarity).
-     * [architecturalDistance] is 1.0 across a module boundary, else a 0..1 how-far-apart
-     * signal. Floors are deliberate: expected/near pairs are demoted, never erased, so
-     * overwhelming evidence can still surface a same-named or co-located coupling.
+     * How far the name penalty can pull a score down. Half, not more: a name is a
+     * weaker signal than counted history, so it must not swing the score further
+     * than the evidence term itself typically ranges. Even at 1.0 similarity the
+     * pair is demoted, never erased.
      */
-    fun interest(pair: AnalysisContext.PairStat, architecturalDistance: Double): Double {
+    const val MAX_NAME_DEMOTION = 0.5
+
+    /**
+     * Interest = evidenceStrength × (1 − 0.5 × nameSimilarity) — the order the
+     * findings list uses.
+     *
+     * This is a ranking heuristic (tier: interpretation), and it is NOT a claim that
+     * evidence always wins. Two files that changed five times and always together do have
+     * the higher Wilson-bounded *ratio* (0.57 against 0.49 for a 20-of-25 pair), but the
+     * lower [evidenceStrength] (1.01 against 1.49) once log support is folded in — so when
+     * the 5-of-5 pair ranks higher it is the name demotion doing it, not better evidence.
+     * That trade is deliberate, and both inputs are published on every finding
+     * (`evidenceStrength`, `nameSimilarity`) precisely so a consumer can re-rank instead
+     * of trusting this.
+     */
+    fun interest(pair: AnalysisContext.PairStat): Double {
         val e = evidenceStrength(pair.together, pair.countA, pair.countB)
-        val x = nameSimilarity(pair.a, pair.b)
-        return e * (0.5 + architecturalDistance) * (1 - 0.75 * x)
+        return e * (1 - MAX_NAME_DEMOTION * nameSimilarity(pair.a, pair.b))
     }
 }

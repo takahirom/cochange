@@ -58,10 +58,193 @@ class RoleExclusionViewTest {
         assertEquals(mapOf(FileRole.TEST to 1), run.hiddenByRole)
     }
 
+    /**
+     * The family projection rebuilds the context, and it used to rebuild it without
+     * the excluded roles — so `clusters --exclude-role` showed the files it had just
+     * reported as hidden.
+     */
+    @Test
+    fun `the family projection keeps hiding what the run hid`() {
+        val hidden = context(FileRole.TEST)
+        val projected = Families.project(
+            hidden,
+            Boundaries(head),
+            listOf(Families.Family("app/Checkout.kt", listOf("app/Checkout.kt", "core/Pricing.kt"))),
+        )
+        assertEquals(hidden.excludedRoles, projected.excludedRoles)
+        assertTrue(!projected.isVisible("app/CheckoutTest.kt"), "a hidden test must stay hidden after projection")
+    }
+
+    /**
+     * compare listed every file it counted, so `--exclude-role test` still showed tests.
+     * This is about the LISTING only — that the rates do not move is
+     * `AggregateScoresIgnoreRoleFilterTest`'s job.
+     */
+    @Test
+    fun `compare hides excluded roles from its listing`() {
+        val shown = Compare.of(context(), context(), minCount = 1).moves.map { it.file }
+        val hiddenRun = Compare.of(context(FileRole.TEST), context(FileRole.TEST), minCount = 1).moves.map { it.file }
+        assertTrue("app/CheckoutTest.kt" in shown, "sanity: the test file participates")
+        assertTrue("app/CheckoutTest.kt" !in hiddenRun, "an excluded role must not be listed: $hiddenRun")
+        assertTrue("app/Checkout.kt" in hiddenRun, "the visible files are still compared")
+    }
+
     @Test
     fun `with no roles excluded nothing is hidden and nothing is reported`() {
         val run = Analyzer(minSupport = 5, minConfidence = 0.6).run(context())
         assertTrue(run.hiddenByRole.isEmpty())
         assertTrue(run.findings.any { "CheckoutTest" in it.summary || "CheckoutTest" in it.detail.observation })
+    }
+}
+
+/**
+ * The promise is that `--exclude-role` never shifts a number. It was being broken by
+ * aggregate scores whose numerator honoured the filter while their denominator did not:
+ * hiding a hub raised `hubFreeRate`, and hiding a hotspot raised `boundaryIntegrity` from
+ * 0 to 1. Scores are now computed over the whole population; only listings are filtered.
+ */
+class AggregateScoresIgnoreRoleFilterTest {
+    private var t = 0L
+    private fun commit(vararg files: String): Commit {
+        t += 3600 * 24
+        return Commit("h$t", "dev", t, "m", files.toList())
+    }
+
+    private val head = setOf(
+        "a/build.gradle.kts", "a/FooTest.kt", "a/Foo.kt",
+        "b/build.gradle.kts", "b/BarTest.kt", "b/Bar.kt",
+    )
+
+    private fun context(vararg roles: String) = AnalysisContext(
+        List(8) { LogicalChange(listOf(commit("a/FooTest.kt", "b/BarTest.kt"))) } +
+            List(8) { LogicalChange(listOf(commit("a/Foo.kt", "b/Bar.kt"))) },
+        Boundaries(head), head, excludedRoles = roles.toSet(),
+    )
+
+    /**
+     * `hubFreeRate` is null below six modules, so the fixture above asserts null == null for
+     * it. This one has enough declared modules for a hub to exist AND makes the hub a test
+     * file, which is the case that used to raise the rate when the filter hid it.
+     */
+    @Test
+    fun `hiding the hub itself does not move the hub-free rate`() {
+        val modules = (1..8).map { "m$it" }
+        val hubHead = setOf("app/build.gradle.kts", "app/SharedTest.kt") +
+            modules.flatMap { listOf("$it/build.gradle.kts", "$it/F$it.kt") }
+        // 24 multi-file units, every one dragging in the test hub across 8 modules.
+        val hubChanges = (1..24).map { i ->
+            val m = modules[i % modules.size]
+            LogicalChange(listOf(commit("app/SharedTest.kt", "$m/F${m.removePrefix("m")}.kt")))
+        }
+        fun ctx(vararg roles: String) =
+            AnalysisContext(hubChanges, Boundaries(hubHead), hubHead, excludedRoles = roles.toSet())
+
+        val shown = Metrics.compute(ctx())
+        val hidden = Metrics.compute(ctx(FileRole.TEST))
+        assertTrue(shown.hubFreeRate != null, "the fixture must actually produce a hub: ${shown.hubFiles}")
+        assertTrue("app/SharedTest.kt" in shown.hubFiles, "the hub is the test file: ${shown.hubFiles}")
+        assertEquals(shown.hubFreeRate, hidden.hubFreeRate, "hiding the hub raised the rate")
+        assertEquals(shown.hubCount, hidden.hubCount, "the rate counted the same hubs")
+        assertTrue(hidden.hubFiles.isEmpty(), "...and the listing drops it")
+    }
+
+    @Test
+    fun `hiding tests does not move a single metric`() {
+        val shown = Metrics.compute(context())
+        val hidden = Metrics.compute(context(FileRole.TEST))
+        assertEquals(shown.boundaryIntegrity, hidden.boundaryIntegrity, "boundaryIntegrity moved")
+        assertEquals(shown.moduleLocality, hidden.moduleLocality, "moduleLocality moved")
+        assertEquals(shown.hubFreeRate, hidden.hubFreeRate, "hubFreeRate moved")
+        assertEquals(shown.multiFileUnits, hidden.multiFileUnits)
+        assertEquals(shown.declaredMultiFileUnits, hidden.declaredMultiFileUnits)
+        assertEquals(shown.crossModuleUnits, hidden.crossModuleUnits)
+        assertEquals(shown.boundaryHotspots, hidden.boundaryHotspots, "a hidden hotspot is still a hotspot")
+    }
+
+    @Test
+    fun `hiding tests does not move a compare rate, only the listing`() {
+        val shown = Compare.of(context(), context(), minCount = 1)
+        val hidden = Compare.of(context(FileRole.TEST), context(FileRole.TEST), minCount = 1)
+        assertEquals(shown.baselineMultiFile, hidden.baselineMultiFile, "the denominator must not move")
+        val visibleRate = { c: Compare.Comparison -> c.moves.single { it.file == "a/Foo.kt" }.baselineRate }
+        assertEquals(visibleRate(shown), visibleRate(hidden), "a visible file's rate must not move")
+        assertTrue(hidden.moves.none { it.file == "a/FooTest.kt" }, "the hidden file is not listed")
+        assertTrue(shown.moves.any { it.file == "a/FooTest.kt" })
+    }
+}
+
+/**
+ * The remaining places a role filter could still move a number: a split candidate's group
+ * count and confidence (the graph was filtered before scoring), and compare's trend
+ * aggregates (summarised after filtering).
+ */
+class RoleFilterLeavesEveryScoreTest {
+    private var t = 0L
+    private fun commit(vararg files: String): Commit {
+        t += 3600 * 24
+        return Commit("h$t", "dev", t, "m", files.toList())
+    }
+
+    private val head = setOf(
+        "app/Hub.kt", "app/A1.kt", "app/A2.kt", "app/B1.kt", "app/B2.kt",
+        "app/C1Test.kt", "app/C2Test.kt",
+    )
+
+    private fun context(vararg roles: String) = AnalysisContext(
+        List(6) { LogicalChange(listOf(commit("app/Hub.kt", "app/A1.kt", "app/A2.kt"))) } +
+            List(6) { LogicalChange(listOf(commit("app/Hub.kt", "app/B1.kt", "app/B2.kt"))) } +
+            List(6) { LogicalChange(listOf(commit("app/Hub.kt", "app/C1Test.kt", "app/C2Test.kt"))) },
+        Boundaries(head), head, excludedRoles = roles.toSet(),
+    )
+
+    @Test
+    fun `hiding tests does not change a split candidate's score or group count`() {
+        val detector = SplitCandidateDetector(minSupport = 5)
+        val shown = detector.detect(context()).single { it.subjects == listOf("app/Hub.kt") }
+        val hidden = detector.detect(context(FileRole.TEST)).single { it.subjects == listOf("app/Hub.kt") }
+        assertEquals(shown.confidence, hidden.confidence, "confidence moved")
+        assertEquals(shown.impact, hidden.impact, "impact moved")
+        assertEquals(
+            shown.detail.groups.size, hidden.detail.groups.size,
+            "the number of independent groups is a fact about the history, not about the view",
+        )
+        // The test group is still counted, and its members are simply not listed.
+        val hiddenGroup = hidden.detail.groups.single { it.hiddenMembers > 0 }
+        assertEquals(2, hiddenGroup.hiddenMembers)
+        assertTrue(hiddenGroup.files.isEmpty(), "both members of that group are tests")
+        assertTrue(hiddenGroup.support > 0, "its support still counts them")
+    }
+
+    @Test
+    fun `a hidden group member appears nowhere in the finding`() {
+        val hidden = SplitCandidateDetector(minSupport = 5)
+            .detect(context(FileRole.TEST)).single { it.subjects == listOf("app/Hub.kt") }
+        val everywhere = listOf(
+            hidden.summary,
+            hidden.detail.observation,
+            hidden.files.joinToString(" "),
+            hidden.detail.groups.flatMap { it.files }.joinToString(" "),
+            hidden.detail.supportingChanges.flatMap { it.filesTouched }.joinToString(" "),
+            hidden.detail.metrics.entries.joinToString(" "),
+        )
+        for (text in everywhere) {
+            assertTrue(
+                "C1Test" !in text && "C2Test" !in text,
+                "an excluded role must not appear in any part of the finding: $text",
+            )
+        }
+        // ...and the reader is told something was withheld rather than left guessing.
+        assertTrue("hidden by --exclude-role" in hidden.detail.observation, hidden.detail.observation)
+    }
+
+    @Test
+    fun `hiding tests does not change compare's trend numbers`() {
+        val shown = Compare.of(context(), context(), minCount = 1)
+        val hidden = Compare.of(context(FileRole.TEST), context(FileRole.TEST), minCount = 1)
+        assertEquals(shown.summary.heating, hidden.summary.heating)
+        assertEquals(shown.summary.cooling, hidden.summary.cooling)
+        assertEquals(shown.summary.totalAbsShift, hidden.summary.totalAbsShift, "the trend number moved")
+        assertEquals(shown.summary.meanAbsShift, hidden.summary.meanAbsShift)
+        assertTrue(hidden.moves.none { it.file.endsWith("Test.kt") }, "the listing still respects the filter")
     }
 }

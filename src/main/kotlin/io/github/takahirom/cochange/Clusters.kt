@@ -9,7 +9,15 @@ package io.github.takahirom.cochange
  */
 object Clusters {
     data class Edge(val a: String, val b: String, val together: Int, val jaccard: Double)
-    data class Cluster(val files: List<String>, val edges: List<Edge>) {
+    data class Cluster(
+        /** The files shown. Excluded roles are omitted; [hiddenFiles] says how many. */
+        val files: List<String>,
+        val edges: List<Edge>,
+        /** Members omitted by `--exclude-role`. The counts below still include them. */
+        val hiddenFiles: Int = 0,
+        /** Members in total, including [hiddenFiles] — what the counts below describe. */
+        val fileCount: Int = files.size,
+    ) {
         /** Sum of pair supports, not distinct change units (files in n pairs count n times). */
         val pairSupportVolume: Long get() = edges.sumOf { it.together.toLong() }
     }
@@ -20,8 +28,13 @@ object Clusters {
         minConfidence: Double,
         fileFilter: (String) -> Boolean = { true },
     ): List<Cluster> {
+        // Built over every file at HEAD, NOT the visible subset. A cluster's file count,
+        // strong-pair count and support volume are facts about the history; filtering the
+        // graph first made `--exclude-role test` shrink all three and re-rank the clusters,
+        // which the tool promises a view filter cannot do. `fileFilter` is different — it
+        // is the caller's `--category` scope, a deliberate narrowing of the question.
         val edges = context.pairs(minTogether = minSupport)
-            .filter { context.isVisible(it.a) && context.isVisible(it.b) }
+            .filter { it.a in context.headFiles && it.b in context.headFiles }
             .filter { fileFilter(it.a) && fileFilter(it.b) }
             .map { Edge(it.a, it.b, it.together, it.jaccard) }
             .filter { it.jaccard >= minConfidence }
@@ -45,9 +58,16 @@ object Clusters {
 
         return edges.groupBy { find(it.a) }
             .map { (_, clusterEdges) ->
-                val files = clusterEdges.flatMap { listOf(it.a, it.b) }.distinct()
+                val all = clusterEdges.flatMap { listOf(it.a, it.b) }.distinct()
                     .sortedByDescending { f -> clusterEdges.filter { it.a == f || it.b == f }.sumOf { it.together } }
-                Cluster(files, clusterEdges.sortedByDescending { it.together })
+                // The counts above came from the whole cluster; the file list a reader sees
+                // omits hidden roles, and `hiddenFiles` says how many.
+                Cluster(
+                    files = all.filter(context::isVisible),
+                    hiddenFiles = all.count { !context.isVisible(it) },
+                    edges = clusterEdges.sortedByDescending { it.together },
+                    fileCount = all.size,
+                )
             }
             .sortedByDescending { it.pairSupportVolume }
     }

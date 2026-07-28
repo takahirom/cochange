@@ -19,9 +19,14 @@ class SplitCandidateDetector(
 
     override fun detect(context: AnalysisContext): List<Finding> {
         // Co-change adjacency over all files, at the weaker partner-partner strength.
+        // Built over every file at HEAD, NOT filtered by role: the claim "this file's
+        // partners fall into N independent groups" is a statement about the whole history,
+        // and filtering the graph first made --exclude-role change a visible finding's
+        // group count, confidence and impact. Hidden partners are omitted from the group
+        // LISTING below, with the omission disclosed.
         val adjacency = HashMap<String, MutableMap<String, Int>>()
         for (p in context.pairs(minTogether = minPartnerLink)) {
-            if (!context.isVisible(p.a) || !context.isVisible(p.b)) continue
+            if (p.a !in context.headFiles || p.b !in context.headFiles) continue
             adjacency.getOrPut(p.a) { HashMap() }[p.b] = p.together
             adjacency.getOrPut(p.b) { HashMap() }[p.a] = p.together
         }
@@ -29,6 +34,8 @@ class SplitCandidateDetector(
         data class Candidate(val file: String, val components: List<List<String>>, val partnerSupport: Int)
 
         val candidates = adjacency.mapNotNull { (file, links) ->
+            // The candidate itself must be visible — it is what the finding is about.
+            if (!context.isVisible(file)) return@mapNotNull null
             val partners = links.filterValues { it >= minSupport }.keys
             if (partners.size < minComponentSize * 2) return@mapNotNull null
             val components = connectedComponents(partners, adjacency)
@@ -69,7 +76,8 @@ class SplitCandidateDetector(
             val structuredGroups = c.components.map { component ->
                 val seen = coChanges(file, component)
                 SplitGroup(
-                    files = component,
+                    files = component.filter(context::isVisible),
+                    hiddenMembers = component.count { !context.isVisible(it) },
                     support = seen?.first ?: 0,
                     linkWeight = component.sumOf { links[it] ?: 0 },
                     firstSeen = seen?.let { day(it.second) } ?: "",
@@ -81,11 +89,22 @@ class SplitCandidateDetector(
             val groupSupport = context.changes.count { unit ->
                 file in unit.files && c.components.any { comp -> comp.any { it in unit.files } }
             }
+            // The prose names files too, so it has to respect the filter as well —
+            // SplitGroup.files was the only place that did, and the observation, the
+            // top-level `files` list and the churn lookup all still leaked hidden paths.
             val groups = c.components.mapIndexed { i, component ->
-                val names = component.take(5).joinToString(", ") { it.substringAfterLast('/') }
-                val more = if (component.size > 5) " … and ${component.size - 5} more" else ""
-                "group ${i + 1} (${component.size} files): $names$more"
+                val shown = component.filter(context::isVisible)
+                val hidden = component.size - shown.size
+                val names = shown.take(5).joinToString(", ") { it.substringAfterLast('/') }
+                val more = if (shown.size > 5) " … and ${shown.size - 5} more" else ""
+                val withheld = if (hidden > 0) {
+                    (if (shown.isEmpty()) "" else "; ") + "$hidden hidden by --exclude-role"
+                } else ""
+                "group ${i + 1} (${component.size} files): $names$more$withheld"
             }
+            // Every partner the finding is about, minus the hidden ones. The counts above
+            // still include them; this is the list a reader acts on.
+            val visiblePartners = c.components.flatten().filter(context::isVisible)
             Finding(
                 id = "",
                 type = type,
@@ -96,12 +115,19 @@ class SplitCandidateDetector(
                 // often the file actually changes.
                 confidence = round2(groupSupport.toDouble() / ownChanges.coerceAtLeast(1)),
                 impact = if (c.components.size >= 3) "high" else "medium",
-                files = listOf(file) + c.components.flatten(),
+                files = listOf(file) + visiblePartners,
+                subjects = listOf(file),
                 evidence = FindingEvidence(
                     support = groupSupport,
                     sampleSize = ownChanges,
                     sampleMeaning = "change units touching $file",
                     ratio = round2(groupSupport.toDouble() / ownChanges.coerceAtLeast(1)),
+                    // Sample-corrected over this type's own denominator, so two split
+                    // candidates can be compared without re-deriving the correction.
+                    evidenceStrength = round2(
+                        kotlin.math.ln(1.0 + groupSupport) *
+                            Surprise.wilsonLower(groupSupport, ownChanges.coerceAtLeast(1))
+                    ),
                 ),
                 detail = FindingDetail(
                     observation = "$file strongly co-changes with ${c.components.sumOf { it.size }} files that fall into " +
@@ -114,10 +140,13 @@ class SplitCandidateDetector(
                     counterSignals = listOf(
                         "Groups can also reflect eras (an old and a new caller generation) or platform variants rather than separable responsibilities — check whether the groups are alive at the same time.",
                     ),
-                    supportingChanges = context.sampleChanges(setOf(file)),
+                    supportingChanges = context.sampleChangesTouching(
+                        file, (listOf(file) + visiblePartners).toSet(),
+                    ),
                     metrics = mapOf(
                         "independentGroups" to c.components.size.toString(),
                         "partners" to c.components.sumOf { it.size }.toString(),
+                        "partnersHiddenByRole" to (c.components.sumOf { it.size } - visiblePartners.size).toString(),
                         "partnerLinkWeight" to c.partnerSupport.toString(),
                     ),
                     groups = structuredGroups,
