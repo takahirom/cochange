@@ -40,15 +40,19 @@ class AnalysisContext(
      */
     val excludedRoles: Set<String> = emptySet(),
 ) {
+    /**
+     * What the tool infers about one path — category, role, language — decided once and
+     * cached. Everything that classifies a file reads this, so the three answers cannot
+     * drift apart; and `isVisible` runs per pair endpoint, so on a large repository the
+     * caching is not incidental.
+     */
+    private val factsCache = HashMap<String, FileFacts>()
+
+    fun facts(path: String): FileFacts = factsCache.getOrPut(path) { FileFacts.of(path, generated) }
+
     /** True when [path]'s role was excluded, so it should not be shown or reported on. */
-    // isVisible runs per pair endpoint, so on a large repo FileRole.of would re-lowercase
-    // and re-scan the same paths hundreds of thousands of times.
-    private val roleCache = HashMap<String, String>()
-
-    private fun roleOf(path: String): String = roleCache.getOrPut(path) { FileRole.of(path, generated) }
-
     fun isHidden(path: String): Boolean =
-        excludedRoles.isNotEmpty() && roleOf(path) in excludedRoles
+        excludedRoles.isNotEmpty() && facts(path).role in excludedRoles
 
     /** A file worth showing: still present at HEAD, and not hidden by an excluded role. */
     fun isVisible(path: String): Boolean = path in headFiles && !isHidden(path)
@@ -64,13 +68,12 @@ class AnalysisContext(
     /** How many analyzed files each excluded role is hiding, for the "and here's what you're not seeing" line. */
     val hiddenByRole: Map<String, Int> by lazy {
         if (excludedRoles.isEmpty()) emptyMap() else analyzedFiles
-            .groupingBy(::roleOf).eachCount()
+            .groupingBy { facts(it).role }.eachCount()
             .filterKeys { it in excludedRoles }
     }
 
     /** Category of one file, treating repo-declared generated files as [FileCategory.GENERATED]. */
-    fun categoryOf(path: String): String =
-        if (path in generated) FileCategory.GENERATED else FileCategory.of(path)
+    fun categoryOf(path: String): String = facts(path).category
 
     /** Category of a pair: the least source-like side (one generated/build file makes the pair that). */
     fun categoryOfPair(a: String, b: String): String {
