@@ -64,46 +64,9 @@ internal fun round2(v: Double) = kotlin.math.round(v * 100) / 100
 object CouplingKind {
     data class Estimate(val kind: String, val effort: String, val note: String)
 
-    /**
-     * A comparison key for a file's language. Known extensions map to a language
-     * family; unknown ones fall back to the raw extension so an unrecognized
-     * language is never silently treated as "same" as a different one.
-     */
-    /**
-     * A file's language family, or null when the path carries no language at all — no
-     * extension (`LICENSE`, `Makefile`) or a dotfile with no stem (`.gitignore`). Those
-     * used to fall through to the raw extension and be compared as if they were code, so
-     * `App.kt` x `.gitignore` came out as "jvm vs gitignore, expensive to break".
-     *
-     * An unmapped but real extension still returns a key (`php` -> "php"), so a genuine
-     * language boundary is not understated just because the table is thin.
-     */
-    fun langKeyOrNull(path: String): String? {
-        val name = path.substringAfterLast('/')
-        val stem = name.substringBeforeLast('.', "")
-        // "LICENSE" has no dot; ".gitignore" has one but nothing before it.
-        if ('.' !in name || stem.isEmpty()) return null
-        return langKey(path)
-    }
-
-    private fun langKey(path: String): String {
-        val ext = path.substringAfterLast('.', "").lowercase()
-        return when (ext) {
-            "kt", "kts", "java" -> "jvm"
-            "swift" -> "swift"
-            // C, C++, Objective-C and their shared headers are one native family: a
-            // foo.c / foo.h or foo.mm / foo.h pair is a companion, not a platform boundary.
-            "c", "h", "hh" -> "native"
-            "ts", "tsx", "js", "jsx" -> "js"
-            "py", "pyi" -> "py"
-            "go" -> "go"
-            "rs" -> "rust"
-            "dart" -> "dart"
-            "rb" -> "ruby"
-            "cpp", "cc", "cxx", "hpp", "hxx", "m", "mm" -> "native"
-            else -> ext.ifEmpty { "?" }
-        }
-    }
+    /** Convenience for callers without an [AnalysisContext] to cache through. */
+    fun of(a: String, b: String, category: String, namesRelated: Boolean): Estimate =
+        of(FileFacts.of(a), FileFacts.of(b), category, namesRelated)
 
     /**
      * Same file name, and the two parent directories are siblings — `crates/a/Cargo.toml`
@@ -121,33 +84,19 @@ object CouplingKind {
     /**
      * What it would cost to act on this coupling, and an honest name for what it is.
      *
-     * Decided from the two endpoints' own categories, then — only when both are source —
-     * from their languages. Reading extensions first was the source of a long line of
-     * false descriptions: `config/app.yaml` × `src/App.kt` is not "a platform boundary
-     * expensive to break", and `pyproject.toml` × `app.py` is not two languages meeting.
-     * A language difference only means something when both sides are code.
+     * Decided from what each endpoint IS — see [FileFacts] — and from their languages only
+     * when both endpoints are code. Reading extensions first was the source of a long line
+     * of false descriptions: a language difference means "platform boundary" only between
+     * two pieces of code.
      *
      * [category] is the PAIR's category, which `categoryOfPair` takes from the least
      * source-like side, so it cannot stand in for either endpoint.
      */
-    fun of(a: String, b: String, category: String, namesRelated: Boolean): Estimate {
-        val ca = FileCategory.of(a)
-        val cb = FileCategory.of(b)
-        fun bothAre(c: String) = ca == c && cb == c
-        fun eitherIs(c: String) = ca == c || cb == c
-        // "Code" is narrower than FileCategory.SOURCE, which is its default bucket: a
-        // localized strings.xml lands in SOURCE but is a resource, and calling a pair of
-        // translations "parallel implementations, check for duplicated logic" was exactly
-        // the false positive the variant-set rule exists to prevent. FileRole knows.
-        // Code is anything in the SOURCE category that isn't a resource, a lockfile or
-        // generated output. A TEST file is code — narrowing this to FileRole.SOURCE
-        // described `list_test.go` as "configuration or a resource rather than code".
-        fun isCode(path: String, category: String) = category == FileCategory.SOURCE &&
-            FileRole.of(path) !in setOf(FileRole.RESOURCE, FileRole.LOCKFILE, FileRole.GENERATED)
-        val eitherIsLockfile = FileRole.of(a) == FileRole.LOCKFILE || FileRole.of(b) == FileRole.LOCKFILE
-        val aIsCode = isCode(a, ca)
-        val bIsCode = isCode(b, cb)
-        val bothSource = aIsCode && bIsCode
+    fun of(a: FileFacts, b: FileFacts, category: String, namesRelated: Boolean): Estimate {
+        fun bothAre(c: String) = a.category == c && b.category == c
+        fun eitherIs(c: String) = a.category == c || b.category == c
+        val eitherIsLockfile = a.role == FileRole.LOCKFILE || b.role == FileRole.LOCKFILE
+        val bothSource = a.isCode && b.isCode
         return when {
             category == FileCategory.GENERATED -> Estimate(
                 "generated", "none",
@@ -164,13 +113,13 @@ object CouplingKind {
             // A variant set is DECLARATIVE files sharing one name under sibling
             // directories: per-crate Cargo.toml bumped by one release, per-locale
             // strings.xml translated together. Neither side may be source.
-            siblingVariants(a, b) && !aIsCode && !bIsCode -> Estimate(
+            siblingVariants(a.path, b.path) && !a.isCode && !b.isCode -> Estimate(
                 "variant-set", "none",
                 "the same file name under sibling directories, declarative on both sides — a variant or lockstep set (coordinated version bumps, translations, per-target manifests). The coupling is the process, not an architectural boundary problem.",
             )
             // Same name, sibling directories, source on BOTH sides: one shape implemented
             // once per feature or service, so possibly duplicated logic.
-            siblingVariants(a, b) && bothSource -> Estimate(
+            siblingVariants(a.path, b.path) && bothSource -> Estimate(
                 "parallel-implementation", "medium",
                 "the same file name under sibling directories, source on both sides — one shape implemented once per feature or service. Check for duplicated logic that belongs in a shared place, rather than assuming the coupling is expected.",
             )
@@ -182,13 +131,13 @@ object CouplingKind {
                 "build-wiring", "low",
                 "both files are build definitions — adding a dependency or bumping a version routinely touches several of them at once. Still worth reading as a boundary signal, but cheap to act on and partly inherent to the build system.",
             )
-            eitherIs(FileCategory.BUILD) && (aIsCode || bIsCode) -> Estimate(
+            eitherIs(FileCategory.BUILD) && (a.isCode || b.isCode) -> Estimate(
                 "manifest-and-source", "low",
                 "one side is a build definition and the other the code it declares — a dependency or entry point registered alongside its implementation. Cheap to act on; not a cross-platform design coupling.",
             )
             // Neither side is code: two declarations kept in step (a config and the CI
             // file beside it, a manifest and a deployment descriptor).
-            !aIsCode && !bIsCode -> Estimate(
+            !a.isCode && !b.isCode -> Estimate(
                 "declarative-pair", "low",
                 "neither side is code — two declarations kept in step, such as a config file and the deployment or CI descriptor beside it. Cheap to act on, and not a design coupling across languages even when the file types differ.",
             )
@@ -205,13 +154,13 @@ object CouplingKind {
             // Only when BOTH sides carry a language. A file with none is not a platform
             // away from anything, and claiming otherwise sends a reader to deprioritize a
             // coupling that is trivially cheap.
-            langKeyOrNull(a) == null || langKeyOrNull(b) == null -> Estimate(
+            a.language == null || b.language == null -> Estimate(
                 "unclassified", "medium",
                 "one side has no language to compare (no extension, or a dotfile) — this is not a cross-platform coupling, but it is not obviously cheap either; read the two files before deciding.",
             )
-            langKey(a) != langKey(b) -> Estimate(
+            a.language != b.language -> Estimate(
                 "cross-language", "high",
-                "both sides are code, in different languages (${langKey(a)} vs ${langKey(b)}) — a design coupling across a platform boundary is expensive to break; weigh it against the impact before committing.",
+                "both sides are code, in different languages (${a.language} vs ${b.language}) — a design coupling across a platform boundary is expensive to break; weigh it against the impact before committing.",
             )
             namesRelated -> Estimate(
                 "companion", "low",
@@ -282,7 +231,8 @@ class BoundaryMismatchDetector(
         fun name(path: String) = if (path == p.a) labelA else labelB
 
         val category = context.categoryOfPair(p.a, p.b)
-        val coupling = CouplingKind.of(p.a, p.b, category, namesRelated(p.a, p.b))
+        // Through the context, so both endpoints are classified once for the whole run.
+        val coupling = CouplingKind.of(context.facts(p.a), context.facts(p.b), category, namesRelated(p.a, p.b))
         val reverse = p.reverse
         val counterSignals = buildList {
             if (reverse < 0.3) add(

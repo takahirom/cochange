@@ -866,7 +866,7 @@ class UnclassifiedLanguageTest {
     @Test
     fun `an unmapped but real extension is still a language boundary`() {
         // .php is not in the table, but it IS a language — this must not be softened.
-        assertEquals("php", CouplingKind.langKeyOrNull("legacy/Foo.php"))
+        assertEquals("php", FileFacts.of("legacy/Foo.php").language)
         val e = CouplingKind.of("web/Foo.kt", "legacy/Foo.php", FileCategory.SOURCE, namesRelated = true)
         assertEquals("cross-language", e.kind)
         assertEquals("high", e.effort)
@@ -874,9 +874,9 @@ class UnclassifiedLanguageTest {
 
     @Test
     fun `a mapped language still resolves normally`() {
-        assertEquals("jvm", CouplingKind.langKeyOrNull("a/A.kt"))
-        assertEquals("native", CouplingKind.langKeyOrNull("a/a.h"))
-        assertEquals(null, CouplingKind.langKeyOrNull("LICENSE"))
-        assertEquals(null, CouplingKind.langKeyOrNull("a/.editorconfig"))
+        assertEquals("jvm", FileFacts.of("a/A.kt").language)
+        assertEquals("native", FileFacts.of("a/a.h").language)
+        assertEquals(null, FileFacts.of("LICENSE").language)
+        assertEquals(null, FileFacts.of("a/.editorconfig").language)
     }
 }
